@@ -8,7 +8,7 @@ const EXPORTS = [
   'fmt', 'parse', 'addDays', 'diffDays', 'sundayOf', 'fmtMoment', 'applyTemplate', 'normalize', 'loadPeriod', 'view',
   'SCHEDULES', 'scheduleArr', 'federalHolidays', 'holidayOn', 'fillHolidays', 'periodIssues', 'blocking', 'planHours',
   'burnInfo', 'parseDue', 'parseCapture', 'captureLine', 'dayHeading', 'captureFile', 'sectionOf',
-  'parseEml', 'parsePastedEmail', 'findProjectByName', 'periodTotal',
+  'parseEml', 'parsePastedEmail', 'findProjectByName', 'periodTotal', 'portalRows', 'portalText', 'PORTAL_HEAD',
 ];
 
 export function loadApp() {

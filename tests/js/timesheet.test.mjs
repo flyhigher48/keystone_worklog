@@ -81,3 +81,18 @@ test('custom schedules and extra holidays', () => {
   s.settings.holidays = false;
   assert.equal(app.holidayOn('2026-12-25'), null);
 });
+
+test('Copy for portal: Network, Activity, blank, Code, TS, 5 blanks, then Sun–Sat (rows without hours are skipped)', () => {
+  withState(app);
+  const week = { rows: [
+    { network: ' 4001234 ', activity: '0010', code: 'RG', ts: false, h: ['', '8', '7.5', '', '', '', ''] },
+    { network: '4005678', activity: '0020', code: 'RG', ts: true, h: ['', '', '', '4', '', '', ''] },
+    { network: '', activity: '', code: 'LA', ts: false, h: ['', '', '', '', '8', '', ''] },
+    { network: '9', activity: '9', code: 'RG', ts: false, h: ['', '', '', '', '', '', ''] }] };
+  assert.equal(app.PORTAL_HEAD.length + 7, 17);
+  assert.deepEqual(app.portalRows(week).map(r => r.length), [17, 17, 17]);
+  assert.equal(app.portalText(week),
+    ['4001234\t0010\t\tRG\t\t\t\t\t\t\t\t8\t7.5\t\t\t\t',
+     '4005678\t0020\t\tRG\tTS\t\t\t\t\t\t\t\t\t4\t\t\t',
+     '\t\t\tLA\t\t\t\t\t\t\t\t\t\t\t8\t\t'].join('\n'));
+});

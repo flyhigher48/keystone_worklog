@@ -21,7 +21,7 @@
   --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);
 }
 :root{color-scheme:light}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;scrollbar-color:#3a4256 #151a27;
   --bg:#0d111b; --card:#151a27; --ink:#e7eaf2; --ink2:#c3c9d8; --muted:#8c96ad; --line:#252c3d; --line2:#1d2333;
   --input:#0f1420; --weekend:#121725; --today:#1c2246;
   --accent:#8b8cf8; --accent-ink:#0d111b; --accent-soft:#22274a;
@@ -33,7 +33,7 @@
   --c-lh:#fbbf24; --c-lh-soft:#352810;
   --shadow:none;
 }}
-:root[data-theme=dark]{color-scheme:dark;
+:root[data-theme=dark]{color-scheme:dark;scrollbar-color:#3a4256 #151a27;
   --bg:#0d111b; --card:#151a27; --ink:#e7eaf2; --ink2:#c3c9d8; --muted:#8c96ad; --line:#252c3d; --line2:#1d2333;
   --input:#0f1420; --weekend:#121725; --today:#1c2246;
   --accent:#8b8cf8; --accent-ink:#0d111b; --accent-soft:#22274a;
@@ -820,14 +820,17 @@ function viewTimesheet() {
   view.period.weeks.forEach((w, wi) => wrap.append(weekCard(w, wi)));
   wrap.append(h('p', { class: 'hint', style: 'text-align:center;margin-top:4px' },
     'Tip: ', h('kbd', {}, '↑'), ' ', h('kbd', {}, '↓'), ' ', h('kbd', {}, '←'), ' ', h('kbd', {}, '→'), ' and ', h('kbd', {}, 'Enter'),
-    ' move between hour cells. Copy for portal pastes Network · Activity · (blank) · Code · TS · Sun–Sat.'));
+    ' move between hour cells. Copy for portal pastes Network · Activity · (blank) · Code · TS · (5 blanks) · Sun–Sat.'));
   return wrap;
 }
 
-/* rows exactly as they go to the portal: Network, Activity, (blank), Code, TS, Sun..Sat */
+/* rows exactly as they go to the portal:
+   Network, Activity, (blank), Code, TS, (blank) ×5, Sun..Sat – the portal has 6 empty columns in total */
+const PORTAL_HEAD = ['Network', 'Activity', '', 'Code', 'TS', '', '', '', '', ''];
+const PORTAL_BLANK = new Set(PORTAL_HEAD.map((t, i) => (t ? -1 : i)).filter(i => i >= 0));
 function portalRows(w) {
   return w.rows.filter(r => sum(r.h) > 0).map(r =>
-    [r.network.trim(), r.activity.trim(), '', r.code, r.ts ? 'TS' : '', ...r.h.map(v => num(v) ? r2(num(v)) : '')]);
+    [r.network.trim(), r.activity.trim(), '', r.code, r.ts ? 'TS' : '', '', '', '', '', '', ...r.h.map(v => num(v) ? r2(num(v)) : '')]);
 }
 const portalText = w => portalRows(w).map(r => r.join('\t')).join('\n');
 async function copyText(text) {
@@ -907,15 +910,15 @@ function weekCard(w, wi) {
   tbody.append(h('tr', { class: 'foot' }, h('td', { colspan: 5 }, 'Daily total'), ...dayTotals, grand, h('td'), h('td')));
 
   // portal preview (exactly what gets copied)
-  const pvHead = ['Network', 'Activity', '', 'Code', 'TS', ...dates.map(dayName)];
+  const pvHead = [...PORTAL_HEAD, ...dates.map(dayName)];
   const pvBody = h('tbody');
   const preview = view.preview[wi] ? h('div', { class: 'preview' },
     h('div', { class: 'lbl', style: 'margin-bottom:6px' }, 'What will be pasted into the portal'),
     h('div', { class: 'tablewrap', style: 'margin:0;padding:0' }, h('table', {},
-      h('thead', {}, h('tr', {}, pvHead.map((t, i) => h('th', { class: i === 2 ? 'blankcol' : '' }, t)))), pvBody))) : null;
+      h('thead', {}, h('tr', {}, pvHead.map((t, i) => h('th', { class: PORTAL_BLANK.has(i) ? 'blankcol' : '' }, t)))), pvBody))) : null;
   if (preview) on(() => {
     const rows = portalRows(w);
-    pvBody.replaceChildren(...(rows.length ? rows.map(r => h('tr', {}, r.map((v, i) => h('td', { class: i === 2 ? 'blankcol' : '' }, v)))) :
+    pvBody.replaceChildren(...(rows.length ? rows.map(r => h('tr', {}, r.map((v, i) => h('td', { class: PORTAL_BLANK.has(i) ? 'blankcol' : '' }, v)))) :
       [h('tr', {}, h('td', { colspan: pvHead.length, class: 'empty' }, 'Nothing to copy yet – rows with no hours are skipped.'))]));
   });
 
@@ -925,7 +928,7 @@ function weekCard(w, wi) {
       h('h2', {}, `Week ${wi + 1}`), h('span', { class: 'sub' }, `${short(ws)} – ${short(addDays(ws, 6))}`), weekChip,
       h('div', { class: 'spacer' }),
       h('button', { class: 'btn ghost' + (view.preview[wi] ? ' on' : ''), onclick: () => { view.preview[wi] = !view.preview[wi]; render(); } }, icon('eye'), 'Preview'),
-      h('button', { class: 'btn soft', title: 'Tab-separated: Network, Activity, (blank), Code, TS, Sun–Sat. Paste into the portal grid.',
+      h('button', { class: 'btn soft', title: 'Tab-separated: Network, Activity, (blank), Code, TS, 5 blank columns, Sun–Sat. Paste into the portal grid.',
         onclick: async () => {
           const n = portalRows(w).length;
           if (!n) return toast('Nothing to copy – enter some hours first');
