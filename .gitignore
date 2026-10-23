@@ -1,0 +1,22 @@
+# Everything in data/ is personal: tracker data, API keys (llm.json), chats, backups, caches, index.
+data/
+
+# offline bundle (python offline_bundle.py): large binaries – copy the folder instead of committing
+models/
+wheels/
+
+# Python / editors / OS
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# packaging
+build/
+dist/
+*.egg-info/
