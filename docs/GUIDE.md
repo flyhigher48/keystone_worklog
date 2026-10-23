@@ -172,7 +172,7 @@ The first capture of a day adds its heading. Anything you write in the note your
 Each week has a **Copy for portal** button. It copies tab-separated rows in the portal's column order:
 
 ```
-Network  Activity  (blank)  Code  TS  (blank)  (blank)  (blank)  (blank)  (blank)  Sun  Mon  Tue  Wed  Thu  Fri  Sat
+Network  Activity  (blank)  Code  TS  (blank)  (blank)  (blank)  (blank)  Sun  Mon  Tue  Wed  Thu  Fri  Sat
 ```
 
 The project name is never copied. Rows with no hours are skipped, and empty days are left blank. Click **Preview** first to see exactly what will be pasted. Then click into the first cell of the portal grid and paste.

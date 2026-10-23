@@ -820,17 +820,17 @@ function viewTimesheet() {
   view.period.weeks.forEach((w, wi) => wrap.append(weekCard(w, wi)));
   wrap.append(h('p', { class: 'hint', style: 'text-align:center;margin-top:4px' },
     'Tip: ', h('kbd', {}, '↑'), ' ', h('kbd', {}, '↓'), ' ', h('kbd', {}, '←'), ' ', h('kbd', {}, '→'), ' and ', h('kbd', {}, 'Enter'),
-    ' move between hour cells. Copy for portal pastes Network · Activity · (blank) · Code · TS · (5 blanks) · Sun–Sat.'));
+    ' move between hour cells. Copy for portal pastes Network · Activity · (blank) · Code · TS · (4 blanks) · Sun–Sat.'));
   return wrap;
 }
 
 /* rows exactly as they go to the portal:
-   Network, Activity, (blank), Code, TS, (blank) ×5, Sun..Sat – the portal has 6 empty columns in total */
-const PORTAL_HEAD = ['Network', 'Activity', '', 'Code', 'TS', '', '', '', '', ''];
+   Network, Activity, (blank), Code, TS, (blank) ×4, Sun..Sat – the portal has 5 empty columns in total */
+const PORTAL_HEAD = ['Network', 'Activity', '', 'Code', 'TS', '', '', '', ''];
 const PORTAL_BLANK = new Set(PORTAL_HEAD.map((t, i) => (t ? -1 : i)).filter(i => i >= 0));
 function portalRows(w) {
   return w.rows.filter(r => sum(r.h) > 0).map(r =>
-    [r.network.trim(), r.activity.trim(), '', r.code, r.ts ? 'TS' : '', '', '', '', '', '', ...r.h.map(v => num(v) ? r2(num(v)) : '')]);
+    [r.network.trim(), r.activity.trim(), '', r.code, r.ts ? 'TS' : '', '', '', '', '', ...r.h.map(v => num(v) ? r2(num(v)) : '')]);
 }
 const portalText = w => portalRows(w).map(r => r.join('\t')).join('\n');
 async function copyText(text) {
@@ -928,7 +928,7 @@ function weekCard(w, wi) {
       h('h2', {}, `Week ${wi + 1}`), h('span', { class: 'sub' }, `${short(ws)} – ${short(addDays(ws, 6))}`), weekChip,
       h('div', { class: 'spacer' }),
       h('button', { class: 'btn ghost' + (view.preview[wi] ? ' on' : ''), onclick: () => { view.preview[wi] = !view.preview[wi]; render(); } }, icon('eye'), 'Preview'),
-      h('button', { class: 'btn soft', title: 'Tab-separated: Network, Activity, (blank), Code, TS, 5 blank columns, Sun–Sat. Paste into the portal grid.',
+      h('button', { class: 'btn soft', title: 'Tab-separated: Network, Activity, (blank), Code, TS, 4 blank columns, Sun–Sat. Paste into the portal grid.',
         onclick: async () => {
           const n = portalRows(w).length;
           if (!n) return toast('Nothing to copy – enter some hours first');
