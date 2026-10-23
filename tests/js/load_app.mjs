@@ -9,6 +9,7 @@ const EXPORTS = [
   'SCHEDULES', 'scheduleArr', 'federalHolidays', 'holidayOn', 'fillHolidays', 'periodIssues', 'blocking', 'planHours',
   'burnInfo', 'parseDue', 'parseCapture', 'captureLine', 'dayHeading', 'captureFile', 'sectionOf',
   'parseEml', 'parsePastedEmail', 'findProjectByName', 'periodTotal', 'portalRows', 'portalText', 'PORTAL_HEAD',
+  'awayOn', 'leaveByDate', 'awayKind', 'trackerSummary',
 ];
 
 export function loadApp() {

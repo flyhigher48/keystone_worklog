@@ -94,7 +94,7 @@ Nothing else is downloaded at runtime: the Markdown, math (KaTeX) and sanitizer 
 | **Today** | Your home page: hours today and this pay period, leave balances, a start/stop timer, **Log my day**, cards due soon, recent notes, the pay-period check, and **Brief me** / **Weekly status report** buttons for Keystone. |
 | **Timesheet** | One pay period (two Sun–Sat weeks). Each row has a project, Network, Activity, pay code and TS, plus hours per day. The top card shows your total against 80 h, split by type. Includes the pay-period check, **Fill from schedule**, **Same as last week** and **Mark as submitted**. |
 | **Projects** | Your list of Network + Activity pairs with a name and a budget of chargeable hours. Shows hours used and remaining, deliverable progress, and a link to the project's note. |
-| **Board** | A kanban board of deliverables (To do / In progress / Blocked / Done), each linked to a project. Drag cards between columns, or click one to edit it. **Calendar** shows cards on their due dates; drag a card onto a day to set its due date. |
+| **Board** | A kanban board of deliverables (To do / In progress / Blocked / Done), each linked to a project. Drag cards between columns, or click one to edit it. **Calendar** shows cards on their due dates; drag a card onto a day to set its due date. It also shows days you're out of office: add annual leave, sick leave, travel or other time away with **Out of office** (or double-click a day), and LA/LS hours you've entered on the Timesheet appear on their own. |
 | **Follow-ups** | Emails you owe a reply: from, subject, reply-by date, project, status (To reply / Waiting on them / Done). Import a saved `.eml`, paste an email (From/Subject are filled in), or capture one. **Draft reply ✦** has Keystone write a reply for you to copy. It never sends anything. |
 | **Reports** | Budget burn-down (pick a project) plus a burn-rate table for every project, leave forecast with a use-or-lose warning, and hours by project by month (CSV or a vault note). **Avg burn** = RG hours in the last 4 completed weeks ÷ the number of those weeks, counting only weeks since the project was first charged (before a full week exists, it uses this week so far). **Weeks left** = budget left ÷ avg burn. |
 | **Notes** | Browse and edit the Markdown notes in your Obsidian vault, with live preview, `[[wikilinks]]` and clickable checkboxes. |
@@ -172,7 +172,7 @@ The first capture of a day adds its heading. Anything you write in the note your
 Each week has a **Copy for portal** button. It copies tab-separated rows in the portal's column order:
 
 ```
-Network  Activity  (blank)  Code  TS  (blank)  (blank)  (blank)  (blank)  Sun  Mon  Tue  Wed  Thu  Fri  Sat
+Network  Activity  (blank)  Code  TS  (blank)  (blank)  (blank)  (blank)  (blank)  Sun  Mon  Tue  Wed  Thu  Fri  Sat
 ```
 
 The project name is never copied. Rows with no hours are skipped, and empty days are left blank. Click **Preview** first to see exactly what will be pasted. Then click into the first cell of the portal grid and paste.

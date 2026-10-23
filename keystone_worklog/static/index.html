@@ -346,6 +346,7 @@ body.docked .shell>.wrap{min-width:0;width:100%;padding-right:12px}
 .ai-h .x{opacity:.8}
 .ai-prof{width:auto;max-width:170px;font-size:12px;padding:3px 6px;margin-left:4px}
 .ai-log{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.ai-log>*{flex-shrink:0}  /* a tall diff card must not be squeezed – the log scrolls instead, so Apply/Reject stay reachable */
 .ai-msg.user{align-self:flex-end;background:var(--accent);color:var(--accent-ink);padding:8px 12px;border-radius:14px 14px 4px 14px;max-width:88%;white-space:pre-wrap;overflow-wrap:anywhere}
 .ai-msg.bot{font-size:13.5px}
 .ai .md{padding:0;max-height:none;overflow:visible;line-height:1.55}
@@ -465,6 +466,12 @@ table.rep td,table.rep th{font-size:13px}
 .calcard .pchip{font-size:10px;padding:1px 6px}
 .calcard.done span:last-child{text-decoration:line-through;color:var(--muted)}
 .undated{display:flex;flex-wrap:wrap;gap:8px} .undated .calcard{width:auto;max-width:240px}
+.k-OOO{--k:var(--muted);--k-soft:var(--line2)}
+.calaway{border:0;border-left:3px solid var(--k);background:var(--k-soft);color:var(--k);border-radius:5px;padding:2px 6px;font:inherit;font-size:11px;font-weight:700;text-align:left;cursor:pointer;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;width:100%}
+.calaway.ts{border-left-style:dashed}
+.calcell.away{background:color-mix(in srgb,var(--line2) 55%,var(--card))}
+.calcell.away.other{background:var(--weekend)}
 dialog.palette{width:min(640px,calc(100vw - 32px));padding:0;margin-top:12vh}
 .palette>input{border:0;border-bottom:1px solid var(--line);border-radius:0;padding:16px 18px;font-size:15px;background:var(--card)}
 .palette>input:focus{outline:none}
@@ -604,12 +611,12 @@ function defaults() {
   return {
     settings: { weekStart: 'sun', anchor: m, periodHours: 80, leaveStart: m, sickRate: 4, annualRate: 4, sickStart: 0, annualStart: 0, vaultPath: '', vaultFolder: 'Keystone',
       schedule: '5x8', holidays: true, extraHolidays: '', carryLimit: 240, reminders: false, dataGit: false, captureNote: 'Today.md', dayFormat: 'dddd, MMMM D, YYYY' },
-    projects: [], deliverables: [], followups: [], periods: {}, timer: null
+    projects: [], deliverables: [], followups: [], away: [], periods: {}, timer: null
   };
 }
 function normalize(d) {
   const base = defaults();
-  const out = { settings: { ...base.settings, ...(d.settings || {}) }, projects: d.projects || [], deliverables: d.deliverables || [], followups: d.followups || [], periods: d.periods || {}, timer: d.timer || null };
+  const out = { settings: { ...base.settings, ...(d.settings || {}) }, projects: d.projects || [], deliverables: d.deliverables || [], followups: d.followups || [], away: d.away || [], periods: d.periods || {}, timer: d.timer || null };
   const old = d.settings && d.settings.weekStart !== 'sun';  // earlier versions: Monday weeks, Mon–Fri only
   if (old) {
     out.settings.weekStart = 'sun';
@@ -820,17 +827,17 @@ function viewTimesheet() {
   view.period.weeks.forEach((w, wi) => wrap.append(weekCard(w, wi)));
   wrap.append(h('p', { class: 'hint', style: 'text-align:center;margin-top:4px' },
     'Tip: ', h('kbd', {}, '↑'), ' ', h('kbd', {}, '↓'), ' ', h('kbd', {}, '←'), ' ', h('kbd', {}, '→'), ' and ', h('kbd', {}, 'Enter'),
-    ' move between hour cells. Copy for portal pastes Network · Activity · (blank) · Code · TS · (4 blanks) · Sun–Sat.'));
+    ' move between hour cells. Copy for portal pastes Network · Activity · (blank) · Code · TS · (5 blanks) · Sun–Sat.'));
   return wrap;
 }
 
 /* rows exactly as they go to the portal:
-   Network, Activity, (blank), Code, TS, (blank) ×4, Sun..Sat – the portal has 5 empty columns in total */
-const PORTAL_HEAD = ['Network', 'Activity', '', 'Code', 'TS', '', '', '', ''];
+   Network, Activity, (blank), Code, TS, (blank) ×5, Sun..Sat – the portal has 6 empty columns in total */
+const PORTAL_HEAD = ['Network', 'Activity', '', 'Code', 'TS', '', '', '', '', ''];
 const PORTAL_BLANK = new Set(PORTAL_HEAD.map((t, i) => (t ? -1 : i)).filter(i => i >= 0));
 function portalRows(w) {
   return w.rows.filter(r => sum(r.h) > 0).map(r =>
-    [r.network.trim(), r.activity.trim(), '', r.code, r.ts ? 'TS' : '', '', '', '', '', ...r.h.map(v => num(v) ? r2(num(v)) : '')]);
+    [r.network.trim(), r.activity.trim(), '', r.code, r.ts ? 'TS' : '', '', '', '', '', '', ...r.h.map(v => num(v) ? r2(num(v)) : '')]);
 }
 const portalText = w => portalRows(w).map(r => r.join('\t')).join('\n');
 async function copyText(text) {
@@ -928,7 +935,7 @@ function weekCard(w, wi) {
       h('h2', {}, `Week ${wi + 1}`), h('span', { class: 'sub' }, `${short(ws)} – ${short(addDays(ws, 6))}`), weekChip,
       h('div', { class: 'spacer' }),
       h('button', { class: 'btn ghost' + (view.preview[wi] ? ' on' : ''), onclick: () => { view.preview[wi] = !view.preview[wi]; render(); } }, icon('eye'), 'Preview'),
-      h('button', { class: 'btn soft', title: 'Tab-separated: Network, Activity, (blank), Code, TS, 4 blank columns, Sun–Sat. Paste into the portal grid.',
+      h('button', { class: 'btn soft', title: 'Tab-separated: Network, Activity, (blank), Code, TS, 5 blank columns, Sun–Sat. Paste into the portal grid.',
         onclick: async () => {
           const n = portalRows(w).length;
           if (!n) return toast('Nothing to copy – enter some hours first');
@@ -2102,6 +2109,62 @@ function viewReports() {
       h('button', { class: 'btn', onclick: exportMonthsCsv }, icon('down'), 'CSV (all months)'), h('button', { class: 'btn', onclick: saveMonthsNote }, icon('file'), 'Save to vault')), table));
 }
 
+/* ---------- out of office: planned leave, travel, sick days (shown on the Board calendar) ---------- */
+const AWAY_KINDS = [['annual', 'Annual leave', 'LA'], ['sick', 'Sick leave', 'LS'], ['travel', 'Travel', 'TS'], ['other', 'Out of office', 'OOO']];
+const awayKind = k => AWAY_KINDS.find(x => x[0] === k) || AWAY_KINDS[3];
+const awayOn = d => state.away.filter(a => a.start <= d && d <= (a.end || a.start));
+function leaveByDate() {  // { date: { LA: hours, LS: hours } } from the timesheet's leave rows
+  const periods = { ...state.periods, ...(view.start && view.period ? { [view.start]: view.period } : {}) }, out = {};
+  for (const [start, p] of Object.entries(periods)) (p.weeks || []).forEach((w, wi) => w.rows.forEach(r => {
+    if (r.code !== 'LA' && r.code !== 'LS') return;
+    r.h.forEach((v, di) => { const n = num(v); if (n > 0) { const o = (out[addDays(start, wi * 7 + di)] ||= {}); o[r.code] = (o[r.code] || 0) + n; } });
+  }));
+  return out;
+}
+function openAway(a, preset = {}) {
+  const isNew = !a;
+  const data = a ? { ...a } : { id: uid(), kind: 'annual', start: fmt(new Date()), end: '', note: '', ...preset };
+  const kind = h('select', {}, AWAY_KINDS.map(([k, l]) => h('option', { value: k }, l)));
+  kind.value = data.kind;
+  const start = h('input', { type: 'date', value: data.start, required: '' }), end = h('input', { type: 'date', value: data.end || data.start });
+  start.onchange = () => { if (!end.value || end.value < start.value) end.value = start.value; };
+  const note = h('input', { value: data.note, placeholder: 'e.g. Site visit in Denver, family trip, conference' });
+  const dlg = h('dialog', { class: 'dlg', onclose: () => dlg.remove() },
+    h('form', { method: 'dialog', onsubmit: e => {
+      e.preventDefault();
+      if (!start.value) return start.focus();
+      if (end.value && end.value < start.value) { toast('The last day is before the first day'); return end.focus(); }
+      Object.assign(data, { kind: kind.value, start: start.value, end: end.value && end.value !== start.value ? end.value : '', note: note.value.trim() });
+      if (isNew) state.away.push(data); else Object.assign(a, data);
+      state.away.sort((x, y) => x.start.localeCompare(y.start));
+      save(); dlg.close(); render(); toast(isNew ? 'Added to the calendar' : 'Updated');
+    } },
+      h('h3', {}, isNew ? 'Out of office' : 'Edit out of office'),
+      h('div', {}, h('label', {}, 'Type'), kind),
+      h('div', { class: 'row2' }, h('div', {}, h('label', {}, 'First day'), start), h('div', {}, h('label', {}, 'Last day'), end)),
+      h('div', {}, h('label', {}, 'Note'), note),
+      h('p', { class: 'hint', style: 'margin:0' }, 'This only marks the calendar. Leave hours still go on the Timesheet as LA or LS; days you log there show up here on their own.'),
+      h('div', { class: 'btns' },
+        isNew ? null : h('button', { type: 'button', class: 'btn danger', style: 'margin-right:auto', onclick: () => {
+          if (!confirm('Remove this from the calendar?')) return;
+          state.away = state.away.filter(x => x.id !== a.id); save(); dlg.close(); render(); toast('Removed');
+        } }, 'Delete'),
+        h('button', { type: 'button', class: 'btn', onclick: () => dlg.close() }, 'Cancel'),
+        h('button', { type: 'submit', class: 'btn primary' }, isNew ? 'Add' : 'Save'))));
+  document.body.append(dlg); dlg.showModal(); kind.focus();
+}
+function awayChips(d, leave) {  // planned entries first, then timesheet leave not already covered by one
+  const aw = awayOn(d), lv = leave[d] || {}, covered = new Set(aw.map(a => awayKind(a.kind)[2]));
+  const range = a => (a.end ? `${short(a.start)} – ${short(a.end)}` : short(a.start));
+  return [
+    ...aw.map(a => { const [, label, code] = awayKind(a.kind), hrs = lv[code];
+      return h('button', { class: 'calaway k-' + code, title: `${label} · ${range(a)}${a.note ? ' · ' + a.note : ''}${hrs ? ` · ${r2(hrs)} h on the timesheet` : ''} – click to edit`,
+        onclick: e => { e.stopPropagation(); openAway(a); } }, label + (hrs ? ` · ${r2(hrs)} h` : '') + (a.note ? ' · ' + a.note : '')); }),
+    ...Object.entries(lv).filter(([c]) => !covered.has(c)).map(([c, n]) =>
+      h('button', { class: 'calaway ts k-' + c, title: 'Logged on the timesheet – click to open that pay period',
+        onclick: e => { e.stopPropagation(); loadPeriod(periodStartFor(d)); view.tab = 'timesheet'; render(); } }, `${c === 'LA' ? 'Annual leave' : 'Sick leave'} · ${r2(n)} h`))];
+}
+
 /* ---------- Board calendar ---------- */
 function calendarView(shown) {
   const m = view.calMonth || fmt(new Date()).slice(0, 7), [y, mo] = m.split('-').map(Number), first = new Date(y, mo - 1, 1);
@@ -2111,21 +2174,23 @@ function calendarView(shown) {
   shown.filter(d => d.due).forEach(d => (byDay[d.due] ||= []).push(d));
   const chipFor = d => h('button', { class: 'calcard' + (d.status === 'done' ? ' done' : ''), draggable: 'true', title: d.title, onclick: () => openDeliverable(d),
     ondragstart: e => e.dataTransfer.setData('text/plain', d.id) }, pchip(projectById(d.projectId)), h('span', {}, d.title));
-  const cells = [];
+  const cells = [], leave = leaveByDate();
   for (let i = 0; i < 42; i++) {
-    const d = addDays(gridStart, i), hol = holidayOn(d);
+    const d = addDays(gridStart, i), hol = holidayOn(d), away = awayChips(d, leave);
     if (i >= 35 && d.slice(0, 7) !== m) break;
-    const cell = h('div', { class: 'calcell' + (d.slice(0, 7) !== m ? ' other' : '') + (d === today ? ' now' : '') + (hol ? ' hol' : ''),
+    const cell = h('div', { class: 'calcell' + (d.slice(0, 7) !== m ? ' other' : '') + (d === today ? ' now' : '') + (hol ? ' hol' : '') + (away.length ? ' away' : ''),
+      ondblclick: e => { if (e.target === cell || e.target.closest('.calday')) openAway(null, { start: d }); },
       ondragover: e => { e.preventDefault(); cell.classList.add('over'); }, ondragleave: () => cell.classList.remove('over'),
       ondrop: e => { e.preventDefault(); const c = state.deliverables.find(x => x.id === e.dataTransfer.getData('text/plain')); if (c) { c.due = d; boardChanged(); toast(`“${c.title}” due ${short(d)}`); } } },
       h('div', { class: 'calday' }, h('span', {}, parse(d).getDate()), hol ? h('span', { class: 'calhol', title: hol }, hol) : null),
-      ...(byDay[d] || []).map(chipFor));
+      ...away, ...(byDay[d] || []).map(chipFor));
     cells.push(cell);
   }
   const undated = shown.filter(d => !d.due && d.status !== 'done');
   return h('div', {},
     h('div', { class: 'calbar' }, h('div', { class: 'seg' }, h('button', { onclick: () => shift(-1) }, icon('left')), h('button', { onclick: () => { view.calMonth = ''; render(); } }, 'Today'), h('button', { onclick: () => shift(1) }, icon('right'))),
-      h('h2', {}, first.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })), h('span', { class: 'hint', style: 'margin:0' }, 'Drag a card onto a day to set its due date')),
+      h('h2', {}, first.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })), h('span', { class: 'hint', style: 'margin:0' }, 'Drag a card onto a day to set its due date · double-click a day to mark it out of office'),
+      h('button', { class: 'btn', style: 'margin-left:auto', onclick: () => openAway(null) }, icon('plus'), 'Out of office')),
     h('div', { class: 'cal' }, ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => h('div', { class: 'calhead' }, d)), cells),
     undated.length ? h('section', { class: 'card', style: 'margin-top:14px' }, h('div', { class: 'card-h' }, h('h2', {}, 'No due date'), h('span', { class: 'chip muted' }, undated.length)), h('div', { class: 'undated' }, undated.map(chipFor))) : null);
 }
@@ -3030,7 +3095,7 @@ const AI_TOOLS = {
     p: { path: ['string'], text: ['string', 'Markdown to add'], under_heading: ['string', 'Heading text without #, optional'] }, req: ['path', 'text'] },
   move_note: { d: 'Move or rename a note (never overwrites). Returns notes that link to the old name. The user reviews it.',
     p: { from_path: ['string'], to_path: ['string'] }, req: ['from_path', 'to_path'] },
-  tracker_summary: { tracker: true, d: 'Read time tracker data: projects with budget/used/remaining hours, current pay period hours, leave balances and deliverables.', p: {}, req: [] },
+  tracker_summary: { tracker: true, d: 'Read time tracker data: projects with budget/used/remaining hours, current pay period hours, leave balances, deliverables and out-of-office days (leave, travel).', p: {}, req: [] },
   add_deliverable: { tracker: true, d: "Add a NEW deliverable card to the tracker's Board. Only for work that is not on the Board yet: to change a card's date, status, notes or title use update_deliverable instead. Refuses a card whose title already exists in the same project. The user reviews it.",
     p: { title: ['string'], project: ['string', 'Project name from tracker_summary'], status: ['string', 'todo, doing, blocked or done'], due: ['string', 'YYYY-MM-DD, optional'], notes: ['string', 'optional'],
       allow_duplicate: ['boolean', 'Only true if the user explicitly asked for a second, separate card with the same title'] }, req: ['title'] },
@@ -3093,6 +3158,8 @@ function trackerSummary() {
       return { name: projectLabel(p), network: p.network, activity: p.activity, budgetHours: b || null, usedHours: rr(u), remainingHours: b ? rr(b - u) : null, deliverables: `${st.done}/${st.total} done` };
     }),
     deliverables: state.deliverables.map(d => ({ id: d.id, title: d.title, project: pname(d.projectId), status: d.status, due: d.due || null, notes: d.notes || '' })),
+    outOfOffice: state.away.filter(a => (a.end || a.start) >= addDays(fmt(new Date()), -31))
+      .map(a => ({ type: awayKind(a.kind)[1], from: a.start, to: a.end || a.start, note: a.note || '' })),
   }, null, 1);
 }
 function findProjectByName(name) {
