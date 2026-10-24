@@ -16,7 +16,7 @@ from pathlib import Path
 from flask import Flask, Response, abort, jsonify, request, send_file, send_from_directory, stream_with_context
 from werkzeug.exceptions import HTTPException
 
-from . import __version__, assistant, vault, vector_index
+from . import __version__, assistant, documents, vault, vector_index
 
 BASE = Path(__file__).resolve().parent      # the package: static/ lives here
 PROJECT_ROOT = BASE.parent                   # the repository, when running from a source checkout
@@ -42,6 +42,10 @@ BACKUP_DIR = DATA_DIR / "backups"           # one dated copy per day (last 60 ke
 BACKUP_NAME = re.compile(r"^data-(\d{4}-\d{2}-\d{2})\.json$")
 PORT = int(os.environ.get("KEYSTONE_PORT") or 5000)
 IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+# "Open in app" never launches these, even when they're readable text (on Windows, opening a script runs it)
+NO_LAUNCH = {".py", ".pyw", ".sh", ".bash", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse", ".wsf", ".com", ".exe", ".msi", ".jar", ".scr",
+             ".pl", ".rb", ".command", ".app", ".desktop", ".lnk", ".url", ".reg", ".hta", ".cpl", ".ipynb"}
+OFFLINE = os.environ.get("KEYSTONE_OFFLINE", "").lower() in ("1", "true", "yes")  # never download anything
 MAX_UPLOAD = 25 * 1024 * 1024
 LOCK = threading.Lock()
 
@@ -228,12 +232,17 @@ def notes_tree():
             items.append({"path": rel.as_posix(), "type": "dir"})
         for f in sorted(filenames):
             ext = Path(f).suffix.lower()
-            if f.startswith(".") or (ext != ".md" and ext not in IMAGE_TYPES):
+            if f.startswith((".", "~$")) or (ext != ".md" and ext not in IMAGE_TYPES and not documents.listable(Path(dirpath) / f)):
                 continue
-            item = {"path": (rel / f).as_posix(), "type": "note" if ext == ".md" else "image"}
-            if ext == ".md":
+            item = {"path": (rel / f).as_posix(), "type": "note" if ext == ".md" else "image" if ext in IMAGE_TYPES else "doc"}
+            if ext == ".md" or item["type"] == "doc":
                 try:
-                    item["mtime"] = int((Path(dirpath) / f).stat().st_mtime)
+                    st = (Path(dirpath) / f).stat()
+                    item["mtime"] = int(st.st_mtime)
+                    if item["type"] == "doc":
+                        item["size"], item["kind"] = st.st_size, documents.kind(f)
+                        if ext in NO_LAUNCH:
+                            item["script"] = True
                 except OSError:
                     pass
             items.append(item)
@@ -397,6 +406,64 @@ def note_raw():
     return send_file(p)
 
 
+# ---------- documents in the vault: preview text, view PDFs, open with this computer's apps ----------
+def doc_path(rel):
+    root, p = safe_path(rel, md=False)
+    if not p.is_file() or not documents.listable(p):
+        abort(404, "Document not found")
+    return root, p
+
+
+@app.get("/api/files/raw")
+def file_raw():
+    """PDFs open in the browser's own viewer; everything else is a download (never rendered on this site)."""
+    _, p = doc_path(request.args.get("path"))
+    pdf = p.suffix.lower() == ".pdf"
+    r = send_file(p, mimetype="application/pdf" if pdf else None, as_attachment=not pdf, download_name=p.name, conditional=True)
+    r.headers["X-Content-Type-Options"] = "nosniff"
+    return r
+
+
+@app.get("/api/files/text")
+def file_text():
+    root, p = doc_path(request.args.get("path"))
+    if not documents.is_document(p):
+        return jsonify(kind=documents.kind(p), sections=[], error=f"{p.suffix} files can't be read here – open it with its app.")
+    e = TEXTS.get(root, p.relative_to(root).as_posix())
+    return jsonify(kind=documents.kind(p), sections=e["sections"][:400], more=max(0, len(e["sections"]) - 400), error=e["error"])
+
+
+def open_with_system(p, reveal=False):
+    """Open a file with its default app, or show it in the file manager. Runs on this computer only."""
+    if sys.platform.startswith("win"):
+        if reveal:
+            subprocess.Popen(["explorer", "/select,", str(p)])
+        else:
+            os.startfile(str(p))  # noqa: S606 – a vault document, type-checked by the caller
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(p)] if reveal else ["open", str(p)])
+    else:
+        subprocess.Popen(["xdg-open", str(p.parent if reveal else p)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+@app.post("/api/files/open")
+def file_open():
+    body = json_body()
+    rel = body.get("path")
+    root, p = safe_path(rel, md=False)
+    ext = p.suffix.lower()
+    reveal = bool(body.get("reveal"))
+    if not p.is_file() or not (ext == ".md" or ext in IMAGE_TYPES or documents.listable(p)):
+        abort(400, "Only notes, images and documents can be opened")
+    if ext in NO_LAUNCH and not reveal:  # never run programs or scripts – showing them in the folder is fine
+        abort(400, f"{p.name} is a script or program, so Keystone won't launch it. Use Show in folder, or view its text here.")
+    try:
+        open_with_system(p, reveal)
+    except (OSError, FileNotFoundError) as e:
+        abort(500, f"Couldn't open it on this computer: {e}")
+    return jsonify(ok=True)
+
+
 # ---------- AI assistant ----------
 LLM_FILE = DATA_DIR / "llm.json"            # provider profiles incl. API keys (git-ignored, owner-only)
 UNDO_DIR = DATA_DIR / "assistant_undo"
@@ -405,7 +472,8 @@ MODEL_CACHE = DATA_DIR / "models"           # embedding model + runtime, downloa
 # The same files bundled for offline computers by offline_bundle.py: $KEYSTONE_MODELS_DIR, or models/ in a source checkout
 MODEL_BUNDLE = Path(os.environ.get("KEYSTONE_MODELS_DIR") or PROJECT_ROOT / "models")
 INDEX = vector_index.VectorIndex(DATA_DIR / "index") if vector_index.available else None
-WRITE_TOOLS = {"create_note", "edit_note", "append_to_note", "move_note"}
+TEXTS = INDEX.texts if INDEX else documents.TextCache(DATA_DIR / "index" / "docs")  # extracted document text (works without LanceDB too)
+WRITE_TOOLS = {"create_note", "edit_note", "append_to_note", "move_note", "move_files"}
 CHAT_ID = re.compile(r"^[a-z0-9]{6,24}$")
 
 
@@ -422,7 +490,8 @@ def json_body():
 
 @app.get("/api/assistant/settings")
 def ai_settings_get():
-    return jsonify({**assistant.public_settings(llm_settings()), "semanticAvailable": INDEX is not None})
+    return jsonify({**assistant.public_settings(llm_settings()), "semanticAvailable": INDEX is not None, "offline": OFFLINE,
+                    "documentTypes": sorted({documents.TYPES[e][0] for e in documents.supported()}), "documentsMissing": documents.missing()})
 
 
 @app.put("/api/assistant/settings")
@@ -493,8 +562,10 @@ def ai_tools():
             return safe_path(rel, md)
         except HTTPException as e:
             raise assistant.ToolError(e.description) from None
-    folder = load_data().get("settings", {}).get("vaultFolder") or vault.DEFAULT_FOLDER
-    return assistant.Tools(root, resolve, vault.safe_folder(folder).as_posix(), UNDO_DIR, INDEX, llm_settings().get("gitCommit", True))
+    settings = load_data().get("settings", {})
+    folder = settings.get("vaultFolder") or vault.DEFAULT_FOLDER
+    return assistant.Tools(root, resolve, vault.safe_folder(folder).as_posix(), UNDO_DIR, INDEX, llm_settings().get("gitCommit", True), TEXTS, docs_on(),
+                           (settings.get("inboxFolder") or "Inbox").strip().strip("/"), (settings.get("captureNote") or "Today.md").strip())
 
 
 def make_plan(t, name, a):
@@ -504,6 +575,8 @@ def make_plan(t, name, a):
         return t.plan_edit(a.get("path", ""), a.get("old_text", ""), a.get("new_text", ""))
     if name == "append_to_note":
         return t.plan_append(a.get("path", ""), a.get("text", ""), a.get("under_heading"))
+    if name == "move_files":
+        return t.plan_move_files(a.get("moves"))
     return t.plan_move(a.get("from_path", ""), a.get("to_path", ""))
 
 
@@ -524,6 +597,10 @@ def ai_tool():
             with LOCK:
                 res = t.apply(plan, plan["summary"])
             msg = f"Done: {plan['summary']}." + (f" Git commit {res['commit']}." if res["commit"] else "")
+            if plan["kind"] == "moves":
+                msg = f"Moved {len(res['moved'])} file(s): " + "; ".join(f"{a} → {b}" for a, b in res["moved"][:60]) + "."
+                if res["failed"]:
+                    msg += " Not moved: " + "; ".join(f"{x['from']} ({x['error']})" for x in res["failed"]) + "."
             if res["backlinks"]:
                 msg += " These notes link to the old name; update their links with edit_note if the user wants: " + ", ".join(res["backlinks"])
             return jsonify(result=msg, **res)
@@ -531,6 +608,12 @@ def ai_tool():
             result = t.search_notes(args.get("query", ""), args.get("folder"), args.get("limit", 8), body.get("vector"))
         elif name == "read_note":
             result = t.read_note(args.get("path", ""), args.get("start_line"), args.get("end_line"))
+        elif name == "read_document":
+            result = t.read_document(args.get("path", ""), args.get("start_part"), args.get("end_part"))
+        elif name == "vault_map":
+            result = t.vault_map(args.get("folder") or "", args.get("depth") or 3)
+        elif name == "suggest_folder":
+            result = t.suggest_folder(args.get("path", ""), args.get("limit") or 3)
         elif name == "list_folder":
             result = t.list_folder(args.get("path") or "")
         elif name == "recent_notes":
@@ -544,6 +627,31 @@ def ai_tool():
         return jsonify(error=str(e))
     except (TypeError, ValueError) as e:
         return jsonify(error=f"Bad arguments for {name}: {e}")
+
+
+# ---------- filing: the inbox review table (works without an AI model) ----------
+@app.post("/api/inbox/suggest")
+def inbox_suggest():
+    body = json_body()
+    try:
+        t = ai_tools()
+        return jsonify(t.inbox_suggestions(body.get("paths")))
+    except assistant.ToolError as e:
+        abort(400, str(e))
+
+
+@app.post("/api/files/move")
+def files_move():
+    """Move files (any type) inside the vault: never overwrites, one undo for the batch, git commit where tracked."""
+    body = json_body()
+    try:
+        t = ai_tools()
+        plan = t.plan_move_files(body.get("moves"))
+        with LOCK:
+            res = t.apply(plan, body.get("label") or plan["summary"])
+    except assistant.ToolError as e:
+        abort(400, str(e))
+    return jsonify(res)
 
 
 @app.post("/api/assistant/undo")
@@ -616,11 +724,30 @@ def ai_chat_file(cid):
 
 
 # semantic index (vectors come from the browser's embedding model)
+def docs_on():
+    s = llm_settings()
+    documents.ALL_TEXT = bool(s.get("plainText", True))  # "other plain-text files" (Settings → AI assistant)
+    return bool(s.get("documents", True))
+
+
 @app.get("/api/index/status")
 def index_status():
+    if docs_on():
+        try:
+            TEXTS.warm(vault_root())  # extract document text in the background, so keyword search covers documents early
+        except HTTPException:
+            pass
     if INDEX is None:
         return jsonify(available=False)
-    return jsonify(INDEX.status(vault_root(), request.args.get("model", "")))
+    return jsonify(INDEX.status(vault_root(), request.args.get("model", ""), docs_on()))
+
+
+@app.get("/api/index/files")
+def index_files():
+    """Per-file indexing status for Settings → Search index."""
+    if INDEX is None:
+        return jsonify(available=False, files=[], counts={}, total=0)
+    return jsonify(available=True, **INDEX.file_list(vault_root(), request.args.get("model", ""), docs_on()))
 
 
 @app.post("/api/index/next")
@@ -628,7 +755,9 @@ def index_next():
     if INDEX is None:
         abort(400, "LanceDB is not installed")
     body = json_body()
-    return jsonify(INDEX.next_batch(vault_root(), body.get("model", ""), max(1, min(16, int(body.get("limit") or 4)))))
+    skip = body.get("skip") if isinstance(body.get("skip"), list) else []
+    return jsonify(INDEX.next_batch(vault_root(), body.get("model", ""), max(1, min(16, int(body.get("limit") or 4))), docs_on(),
+                                    skip[:5000], max(0, min(600, int(body.get("settle") or 0)))))
 
 
 @app.post("/api/index/upsert")
@@ -636,9 +765,11 @@ def index_upsert():
     if INDEX is None:
         abort(400, "LanceDB is not installed")
     body = json_body()
-    root, p = safe_path(body.get("path"))
+    root, p = safe_path(body.get("path"), md=False)
+    if p.suffix.lower() != ".md" and not documents.is_document(p):
+        abort(400, "Only notes and documents are indexed")
     try:
-        INDEX.upsert(root, body.get("model", ""), p.relative_to(root).as_posix(), int(body.get("mtime", 0)), body.get("chunks") or [])
+        INDEX.upsert(root, body.get("model", ""), p.relative_to(root).as_posix(), int(body.get("mtime", 0)), body.get("chunks") or [], body.get("error"))
     except ValueError as e:
         abort(400, str(e))
     return jsonify(ok=True)
@@ -656,6 +787,9 @@ def model_file(kind, p):
     if p not in vector_index.EMBED_FILES[kind]:  # only the known files: never an open proxy
         abort(404)
     dest = next((d for d in (MODEL_BUNDLE / kind / p, MODEL_CACHE / kind / p) if d.is_file()), None)
+    if dest is None and OFFLINE:
+        abort(404, "The embedding model isn't on this computer, and Keystone is running offline. "
+                   "Run keystone-worklog-bundle on a computer with internet, copy its models/ folder here and start with --models-dir.")
     if dest is None:
         dest, url = MODEL_CACHE / kind / p, vector_index.EMBED_SOURCES[kind] + p
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -688,8 +822,12 @@ def main():
     ap.add_argument("--port", type=int, default=PORT, help="port to listen on (default 5000, or $KEYSTONE_PORT)")
     ap.add_argument("--no-browser", action="store_true", help="don't open a browser window")
     ap.add_argument("--models-dir", type=Path, help="embedding model bundle made by keystone-worklog-bundle (for computers without internet)")
+    ap.add_argument("--offline", action="store_true", help="never connect to the internet (for air-gapped computers; also $KEYSTONE_OFFLINE=1)")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = ap.parse_args()
+    if args.offline:
+        global OFFLINE
+        OFFLINE = True
     if args.models_dir:
         global MODEL_BUNDLE
         MODEL_BUNDLE = args.models_dir.resolve()

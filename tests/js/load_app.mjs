@@ -10,6 +10,8 @@ const EXPORTS = [
   'burnInfo', 'parseDue', 'parseCapture', 'captureLine', 'dayHeading', 'captureFile', 'sectionOf',
   'parseEml', 'parsePastedEmail', 'findProjectByName', 'periodTotal', 'portalRows', 'portalText', 'PORTAL_HEAD',
   'awayOn', 'leaveByDate', 'awayKind', 'trackerSummary',
+  'parseIcs', 'expandRrule', 'quarterSplit', 'planLeave', 'leaveFillEntries', 'timerGroups', 'payPeriodNudges', 'periodHistory', 'headsUp',
+  'fillUsual', 'saveUsual', 'monthTable', 'eventsOn', 'matchEventProject',
 ];
 
 export function loadApp() {
@@ -21,12 +23,12 @@ export function loadApp() {
   // just enough of a browser for the script to load
   const stub = () => new Proxy(function () {}, { get: (t, k) => (k === Symbol.toPrimitive ? () => '' : stub()), set: () => true, apply: () => stub() });
   const sandbox = {
-    console, URL, TextDecoder, TextEncoder, atob, btoa, setTimeout, clearTimeout, setInterval: () => 0,
+    console, URL, TextDecoder, TextEncoder, atob, btoa, setTimeout, clearTimeout, setInterval: () => 0, confirm: () => true,
     document: { getElementById: () => stub(), addEventListener() {}, querySelectorAll: () => [], body: stub(), createElement: () => stub(), createElementNS: () => stub() },
     window: { addEventListener() {} }, localStorage: { getItem: () => null, setItem() {} }, navigator: {}, innerWidth: 1200,
   };
   vm.createContext(sandbox);
-  vm.runInContext(`${code};\nglobalThis.__app = { ${EXPORTS.join(', ')}, setState: s => { state = s; }, getState: () => state };`, sandbox);
+  vm.runInContext(`${code};\nglobalThis.__app = { ${EXPORTS.join(', ')}, setState: s => { state = s; }, getState: () => state, setView: v => Object.assign(view, v) };`, sandbox);
   return sandbox.__app;
 }
 

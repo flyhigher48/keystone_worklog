@@ -25,3 +25,6 @@ The license headers are kept at the top of each minified file.
 | --- | --- |
 | [Flask](https://github.com/pallets/flask) and its dependencies | BSD-3-Clause |
 | [LanceDB](https://github.com/lancedb/lancedb) (optional) and its dependencies, e.g. pyarrow, numpy, pydantic | Apache-2.0 / BSD / MIT |
+| [pypdf](https://github.com/py-pdf/pypdf) (optional, `documents`) | BSD-3-Clause |
+| [python-docx](https://github.com/python-openxml/python-docx) and [python-pptx](https://github.com/scanny/python-pptx) (optional, `documents`) and their dependencies lxml, Pillow, XlsxWriter, typing_extensions | MIT / BSD / HPND / PSF |
+| [openpyxl](https://foss.heptapod.net/openpyxl/openpyxl) (optional, `documents`) and et_xmlfile | MIT |

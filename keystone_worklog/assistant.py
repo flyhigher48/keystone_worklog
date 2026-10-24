@@ -5,6 +5,7 @@ this module keeps API keys on the server, forwards chat requests to any
 OpenAI-compatible /chat/completions endpoint, and performs every file action inside
 the vault. There is deliberately no delete tool.
 """
+import collections
 import difflib
 import json
 import os
@@ -17,9 +18,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import vault
+from . import documents, vault
 
 READ_LIMIT = 20000
+# common words left out of keyword search, so "when can the crew start" matches on "crew" and "start"
+STOP_WORDS = set("""a an and are as at be been but by can could did do does for from had has have how i if in into is it its
+me my no not of on or our so than that the their them then there these they this to too up us was we were what when where which
+who whom why will with would you your about after all also any before between both each find get just more most much
+other over same should some such through under very want document documents file files note notes show tell""".split())
 UNDO_KEEP = 100
 
 
@@ -32,7 +38,7 @@ class LLMError(Exception):
 
 
 # ---------- settings (data/llm.json, never sent to the browser with keys) ----------
-DEFAULTS = {"profiles": [], "active": None, "autoApply": False, "gitCommit": True, "semantic": True, "maxSteps": 12}
+DEFAULTS = {"profiles": [], "active": None, "autoApply": False, "gitCommit": True, "semantic": True, "documents": True, "plainText": True, "maxSteps": 12}
 PROFILE_KEYS = ("id", "name", "baseUrl", "apiKey", "model", "trackerAccess", "stream", "temperature")
 
 
@@ -67,7 +73,7 @@ def public_settings(s):
 
 def merge_settings(s, incoming):
     """Apply edits from the browser. An empty apiKey keeps the saved one; clearKey removes it."""
-    for k in ("autoApply", "gitCommit", "semantic"):
+    for k in ("autoApply", "gitCommit", "semantic", "documents", "plainText"):
         if k in incoming:
             s[k] = bool(incoming[k])
     if "maxSteps" in incoming:
@@ -187,6 +193,18 @@ def git_init(root):
     return git_status(root)
 
 
+def git_commit_moves(root, moves, message):
+    """Commit moved files only where git already tracked them – moving a big untracked file (an .odb, a PDF)
+    must not suddenly add it to the repository."""
+    if _git(root, "rev-parse", "--show-toplevel").returncode:
+        return None
+    paths = []
+    for src, dst in moves:
+        if _git(root, "ls-files", "--error-unmatch", "--", src).returncode == 0:
+            paths += [src, dst]
+    return git_commit(root, paths, message) if paths else None
+
+
 def git_commit(root, paths, message):
     """Commit only `paths` (other uncommitted work in the vault is left alone). Returns short hash or None."""
     if _git(root, "rev-parse", "--show-toplevel").returncode:
@@ -202,13 +220,17 @@ def git_commit(root, paths, message):
 
 # ---------- vault tools ----------
 class Tools:
-    def __init__(self, root, resolve, tracker_folder, undo_dir, index=None, git_on=True):
+    def __init__(self, root, resolve, tracker_folder, undo_dir, index=None, git_on=True, texts=None, docs=False, inbox="Inbox", capture="Today.md"):
         self.root = Path(root)
         self.resolve = resolve  # (rel, md) -> (root, Path); enforces vault-only paths
         self.tracker = tracker_folder.strip("/")
         self.undo_dir = Path(undo_dir)
         self.index = index
         self.git_on = git_on
+        self.texts = texts      # documents.TextCache: extracted text of PDFs, Office files, emails…
+        self.docs = bool(docs and texts is not None)  # search documents too (Settings → AI assistant)
+        self.inbox = (inbox or "Inbox").strip("/")       # the folder new files land in, to be filed
+        self.capture = (capture or "Today.md").strip("/")  # the quick-capture note: a scratchpad, never a filing hint
 
     def rel(self, p):
         return p.relative_to(self.root).as_posix()
@@ -230,7 +252,7 @@ class Tools:
         base = self.resolve(path.strip("/"), False)[1] if path.strip("/") else self.root
         if not base.is_dir():
             raise ToolError(f"No folder named '{path}'")
-        dirs, notes = [], []
+        dirs, notes, docs = [], [], []
         for c in sorted(base.iterdir(), key=lambda c: c.name.lower()):
             if c.name.startswith("."):
                 continue
@@ -238,10 +260,19 @@ class Tools:
                 dirs.append(c.name + "/")
             elif c.suffix.lower() == ".md":
                 notes.append(c.name)
+            elif self.docs and documents.is_document(c):
+                docs.append(c.name)
         where = self.rel(base) if base != self.root else "(vault root)"
-        return f"{where}\nFolders: {', '.join(dirs) or 'none'}\nNotes: {', '.join(notes[:300]) or 'none'}" + (" …" if len(notes) > 300 else "")
+        out = f"{where}\nFolders: {', '.join(dirs) or 'none'}\nNotes: {', '.join(notes[:300]) or 'none'}" + (" …" if len(notes) > 300 else "")
+        if docs:
+            out += f"\nDocuments (read with read_document): {', '.join(docs[:300])}" + (" …" if len(docs) > 300 else "")
+        return out
 
     def read_note(self, path, start_line=None, end_line=None):
+        bare = (path or "").strip().lstrip("/").split("#", 1)[0]
+        if Path(bare).suffix and not bare.lower().endswith(".md"):
+            if self.docs and documents.is_document(self.resolve(bare, False)[1]):
+                return self.read_document(bare)
         p = self.note(path)
         if not p.is_file():
             raise ToolError(f"Note not found: {path}. Use search_notes or list_folder to find the right path.")
@@ -254,7 +285,8 @@ class Tools:
         return f"{head}\n---\n{body[:READ_LIMIT]}" + (f"\n… [truncated; read more with start_line={a + body[:READ_LIMIT].count(chr(10)) + 1}]" if cut else "")
 
     def keyword_search(self, query, folder=None, limit=8):
-        words = [w for w in re.findall(r"[\w$\\-]{2,}", query.lower())][:12]
+        words = [w for w in re.findall(r"[\w$\\-]{2,}", query.lower())]
+        words = [w for w in words if w not in STOP_WORDS][:12] or words[:12]
         if not words:
             return []
         phrase = query.lower().strip()
@@ -273,8 +305,44 @@ class Tools:
             i = low.find(words[0]) if words[0] in low else next((low.find(w) for w in words if w in low), 0)
             snippet = text[max(0, i - 120): i + 220].replace("\n", " ").strip()
             hits.append({"path": rel_path, "heading": "", "text": snippet, "score": score})
+        if self.docs:
+            hits += self.keyword_search_documents(words, phrase, folder)
         hits.sort(key=lambda h: -h["score"])
         return hits[:limit]
+
+    def keyword_search_documents(self, words, phrase, folder=None):
+        """Keyword hits in documents whose text has been extracted (indexing extracts them; the rest are warmed in the background)."""
+        prefix = folder.strip("/") + "/" if folder and folder.strip("/") else ""
+        hits, missing, budget = [], False, time.monotonic() + 3  # read uncached documents for up to ~3 s, the rest in the background
+        for rel_path, m in sorted(documents.vault_documents(self.root).items(), key=lambda x: -x[1]):
+            if prefix and not rel_path.startswith(prefix):
+                continue
+            entry = self.texts.cached(self.root, rel_path, m)
+            if entry is None and time.monotonic() < budget:
+                entry = self.texts.get(self.root, rel_path, m)
+            if entry is None:
+                missing = True
+            title = Path(rel_path).name.lower()
+            name_score = 6 * sum(w in title for w in words)
+            best, total = None, name_score
+            for sec in (entry or {}).get("sections", []):
+                low = sec["text"].lower()
+                sc = sum(min(low.count(w), 20) for w in words) + (10 if len(phrase) > 4 and phrase in low else 0)
+                total += sc
+                if sc and (best is None or sc > best[0]):
+                    best = (sc, sec, low)
+            if not total:
+                continue
+            if best:
+                _, sec, low = best
+                i = next((low.find(w) for w in words if w in low), 0)
+                snippet, heading = sec["text"][max(0, i - 120): i + 220].replace("\n", " ").strip(), sec["heading"]
+            else:
+                snippet, heading = "(matched the file name)", ""
+            hits.append({"path": rel_path, "heading": heading, "text": snippet, "score": total})
+        if missing:
+            self.texts.warm(self.root)
+        return hits
 
     def search_notes(self, query, folder=None, limit=8, vector=None):
         limit = max(1, min(20, int(limit or 8)))
@@ -283,21 +351,278 @@ class Tools:
         merged = {}
         for source, rows in (("keyword", kw), ("meaning", sem)):
             for rank, r in enumerate(rows):  # reciprocal rank fusion
-                m = merged.setdefault(r["path"], {"path": r["path"], "score": 0.0, "via": set(), "heading": "", "text": ""})
+                m = merged.setdefault(r["path"], {"path": r["path"], "score": 0.0, "via": set(), "heading": "", "text": "", "also": ""})
                 m["score"] += 1 / (60 + rank)
                 m["via"].add(source)
                 if source == "meaning" or not m["text"]:
+                    if source == "meaning" and m["heading"] and m["heading"] != r["heading"]:
+                        m["also"] = m["heading"]  # the keyword match is somewhere else in the file: mention both
                     m["heading"], m["text"] = r["heading"], r["text"]
         rows = sorted(merged.values(), key=lambda m: -m["score"])[:limit]
         if not rows:
-            return f"No notes matched “{query}”." + ("" if vector else " (Keyword search only – the meaning index isn't ready.)")
+            return f"Nothing in the vault matched “{query}”." + ("" if vector else " (Keyword search only – the meaning index isn't ready.)")
         out = []
         for i, m in enumerate(rows, 1):
-            name = Path(m["path"]).stem
-            where = f" › {m['heading']}" if m["heading"] else ""
+            is_note = m["path"].lower().endswith(".md")
+            name = Path(m["path"]).stem if is_note else Path(m["path"]).name
+            page = re.match(r"(?:.* › )?Page (\d+)$", m["heading"] or "")
+            link = f"[[{name}#page={page.group(1)}]]" if page and name.lower().endswith(".pdf") else f"[[{name}]]"
+            where = (f" › {m['heading']}" if m["heading"] else "") + (f" (keywords also on: {m['also']})" if m.get("also") else "")
+            what = "" if is_note else f"{documents.kind(m['path'])}; "
             snippet = re.sub(r"\s+", " ", m["text"])[:300]
-            out.append(f"{i}. [[{name}]] — {m['path']}{where} ({'+'.join(sorted(m['via']))})\n   {snippet}")
+            out.append(f"{i}. {link} — {m['path']}{where} ({what}{'+'.join(sorted(m['via']))})\n   {snippet}")
         return "\n".join(out)
+
+    def read_document(self, path, start_part=None, end_part=None):
+        """Text of a PDF / Word / PowerPoint / Excel / email / text file, by numbered parts (pages, slides, sheets…)."""
+        path = (path or "").strip().lstrip("/").split("#", 1)[0]
+        if not self.docs:
+            raise ToolError("Document search is turned off in Settings → AI assistant.")
+        p = self.resolve(path, False)[1]
+        if not p.is_file():
+            raise ToolError(f"Document not found: {path}. Use search_notes or list_folder to find the right path.")
+        if not documents.is_document(p):
+            label = documents.kind(path)
+            if label in documents.missing():
+                raise ToolError(f"Reading {label} files needs the {documents.missing()[label]} package on this computer (pip install \"keystone-worklog[documents]\"). Tell the user.")
+            raise ToolError(f"{path} isn't a file Keystone can read (binary, or an unsupported format). Notes (.md) are read with read_note.")
+        entry = self.texts.get(self.root, self.rel(p))
+        if entry["error"]:
+            raise ToolError(f"Couldn't read {self.rel(p)}: {entry['error']}.")
+        parts = entry["sections"]
+        n = len(parts)
+        a = max(1, int(start_part or 1))
+        b = min(n, int(end_part or n))
+        body, last = [], a - 1
+        for i in range(a, b + 1):
+            s = parts[i - 1]
+            block = f"[Part {i}{' – ' + s['heading'] if s['heading'] else ''}]\n{s['text']}"
+            if body and sum(len(x) for x in body) + len(block) > READ_LIMIT:
+                break
+            body.append(block[:READ_LIMIT])
+            last = i
+        head = f"{self.rel(p)} ({documents.kind(p)}; parts {a}-{last} of {n})"
+        more = f"\n… [more: read_document with start_part={last + 1}]" if last < b else ""
+        return f"{head}\n---\n" + "\n\n".join(body) + more
+
+    # ----- filing: the vault's structure, where a file belongs, moving files -----
+    def _walk_files(self):
+        """(relative path, folder) for every visible file, notes and documents alike (cached per request)."""
+        if getattr(self, "_files", None) is None:
+            self._files = []
+            for dirpath, dirnames, filenames in os.walk(self.root):
+                dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in ("__pycache__", "node_modules", ".ipynb_checkpoints"))
+                rel_dir = Path(dirpath).relative_to(self.root).as_posix()
+                for f in filenames:
+                    if not f.startswith((".", "~$")):
+                        self._files.append((f"{rel_dir}/{f}" if rel_dir != "." else f, "" if rel_dir == "." else rel_dir))
+        return self._files
+
+    def _folder_note(self, folder):
+        """A folder's own description: <folder>/<folder name>.md, README.md, index.md or _about.md."""
+        name = Path(folder).name if folder else ""
+        for cand in ([f"{name}.md"] if name else []) + ["README.md", "Readme.md", "index.md", "_about.md", "About.md"]:
+            p = self.root / folder / cand
+            if p.is_file():
+                lines = [l.strip() for l in self.read(p).splitlines() if l.strip() and not l.startswith(("#", "---", "<!--")) and ":" not in l[:20]]
+                text = re.sub(r"\s+", " ", " ".join(lines))[:200]
+                if text:
+                    return text
+        return ""
+
+    def vault_map(self, folder="", depth=3):
+        depth = max(1, min(6, int(depth or 3)))
+        base = folder.strip("/")
+        if base and not self.resolve(base, False)[1].is_dir():
+            raise ToolError(f"No folder named '{folder}'")
+        stats = {}
+        for rel, d in self._walk_files():
+            if base and not (d == base or d.startswith(base + "/")):
+                continue
+            node = stats.setdefault(d, {"notes": 0, "files": 0, "names": []})
+            if rel.lower().endswith(".md"):
+                node["notes"] += 1
+            else:
+                node["files"] += 1
+            node["names"].append(Path(rel).name)
+        dirs = set(stats)
+        for d in list(dirs):  # make sure every ancestor appears
+            parts = d.split("/") if d else []
+            for i in range(1, len(parts)):
+                dirs.add("/".join(parts[:i]))
+        start = len(base.split("/")) if base else 0
+        lines, hidden = [], 0
+        for d in sorted(dirs, key=lambda x: x.lower()):
+            if base and not (d == base or d.startswith(base + "/")):
+                continue
+            level = (len(d.split("/")) if d else 0) - start
+            if level > depth:
+                hidden += 1
+                continue
+            st = stats.get(d, {"notes": 0, "files": 0, "names": []})
+            below = sum(1 for x in dirs if x.startswith(d + "/")) if d else 0
+            tag = " (time tracker – generated)" if d == self.tracker or d.startswith(self.tracker + "/") else " (INBOX – files waiting to be filed)" if d == self.inbox else ""
+            counts = ", ".join(x for x in (f"{st['notes']} notes" if st["notes"] else "", f"{st['files']} files" if st["files"] else "") if x) or "empty"
+            sample = ", ".join(sorted(st["names"], key=str.lower)[:6]) + (" …" if len(st["names"]) > 6 else "") if st["names"] else ""
+            about = self._folder_note(d)
+            lines.append(f"{'  ' * max(0, level)}{d or '(vault root)'}/ — {counts}{f', {below} subfolders' if below and level == depth else ''}{tag}"
+                         + (f"\n{'  ' * max(0, level)}   e.g. {sample}" if sample else "") + (f"\n{'  ' * max(0, level)}   about: {about}" if about else ""))
+        rules = next((rel for rel, _ in self._walk_files() if Path(rel).name.lower() == "filing rules.md"), None)
+        out = "\n".join(lines)
+        if len(out) > READ_LIMIT:
+            out = out[:READ_LIMIT] + f"\n… [cut; call vault_map with a folder to see more]"
+        return (f"Folders{' under ' + base if base else ''} (depth {depth}{f', {hidden} deeper folders not shown' if hidden else ''}):\n" + out
+                + (f"\n\nFiling rules note: {rules} – read it with read_note before filing." if rules else "\n\nNo 'Filing rules' note yet."))
+
+    @staticmethod
+    def _job_stem(name):
+        """'girder_v3.inp' → 'girder'; 'Bridge spec rev B (2).pdf' → 'bridge spec' – to match versions of the same thing."""
+        stem = Path(name).stem.lower()
+        return re.sub(r"[\s_.-]*(\(\d+\)|v\d+[a-z]?|rev[\s_.-]*\w{1,3}|r\d+|final|draft|copy|\d{4}-\d{2}-\d{2}|\d{6,8})$", "", stem).strip(" _-.") or stem
+
+    def folder_suggestions(self, rel, limit=3):
+        """Where a file probably belongs: folders of files with similar content, plus files with the same (job) name."""
+        p = self.resolve(rel, False)[1]
+        if not p.is_file():
+            raise ToolError(f"File not found: {rel}")
+        rel = self.rel(p)
+        own_dir, stem, job = Path(rel).parent.as_posix(), p.stem.lower(), self._job_stem(p.name)
+        skip = lambda d: d == self.inbox or d.startswith(self.inbox + "/") or d == self.tracker or d.startswith(self.tracker + "/")  # noqa: E731
+        hits = []  # (folder, weight 0..1, raw similarity, reason)
+        for other, d in self._walk_files():  # same name / same job name elsewhere in the vault
+            if other == rel or skip(d) or d == own_dir:
+                continue
+            o = Path(other)
+            if o.stem.lower() == stem:
+                hits.append((d, 1.0, 1.0, f"has {o.name}"))
+            elif len(job) >= 4 and self._job_stem(o.name) == job:
+                hits.append((d, 0.8, 0.8, f"has {o.name}"))
+        name_words = {w for w in re.findall(r"[a-z][a-z0-9]{3,}", Path(rel).stem.lower()) if w not in STOP_WORDS}
+        if name_words:  # words of the file name in a folder's own name: "runway edge lights.csv" → Projects/Runway Lighting
+            for d in {d for _, d in self._walk_files() if d and not skip(d) and d != own_dir}:
+                common = name_words & set(re.findall(r"[a-z][a-z0-9]{3,}", Path(d).name.lower()))
+                if common:
+                    hits.append((d, 0.5 * len(common), 0.5, f"folder name matches “{sorted(common)[0]}”"))
+        sims = self.index.similar_files(self.root, rel, 16, self.inbox) if self.index else None
+        if sims:
+            sims = [x for x in sims if x["path"] != self.capture][:15]
+            # only matches clearly above the background count: weight = how far above the median similarity
+            scores = sorted(x["score"] for x in sims)
+            floor = scores[len(scores) // 2] if len(scores) >= 4 else 0.0
+            for x in sims:
+                d = Path(x["path"]).parent.as_posix()
+                d = "" if d == "." else d
+                w = (x["score"] - floor) / max(1e-6, 1 - floor)
+                if w > 0 and not skip(d) and d != own_dir:
+                    hits.append((d, w, x["score"], f"similar to {Path(x['path']).name}"))
+        else:  # not embedded yet: fall back to keyword search on its most telling words
+            text = ""
+            if p.suffix.lower() == ".md":
+                text = self.read(p)
+            elif self.texts is not None and documents.is_document(p):
+                text = " ".join(x["text"] for x in self.texts.get(self.root, rel)["sections"])[:20000]
+            words = [w for w in re.findall(r"[a-z][a-z0-9-]{3,}", text.lower()) if w not in STOP_WORDS]
+            common = [w for w, _ in collections.Counter(words).most_common(8)]
+            for rank, h in enumerate(self.keyword_search(" ".join(common), None, 10) if common else []):
+                d = Path(h["path"]).parent.as_posix()
+                d = "" if d == "." else d
+                if not skip(d) and d != own_dir and h["path"] != rel:
+                    hits.append((d, 0.6 / (1 + rank * 0.5), 0.5 if rank < 3 else 0.35, f"shares words with {Path(h['path']).name}"))
+        hits = [(d, w * 0.3 if d == "" else w, raw, why) for d, w, raw, why in hits]  # the vault root is rarely where a file belongs
+        votes = {}
+        for d, w, raw, why in sorted(hits, key=lambda x: -x[1]):  # diminishing returns per folder: a big folder can't win by volume
+            v = votes.setdefault(d, {"folder": d, "score": 0.0, "n": 0, "best": 0.0, "why": []})
+            v["score"] += w * 0.5 ** v["n"]
+            v["n"] += 1
+            v["best"] = max(v["best"], raw)
+            if len(v["why"]) < 3 and why not in v["why"]:
+                v["why"].append(why)
+        ranked = sorted(votes.values(), key=lambda v: -v["score"])
+        total = sum(v["score"] for v in ranked) or 1
+        for v in ranked:
+            v["share"] = round(v["score"] / total, 2)
+            v["score"] = round(v["score"], 3)
+            v.pop("n")
+        top = ranked[0] if ranked else None
+        if not top or top["best"] < 0.3:
+            conf = "none"
+        elif top["best"] >= 0.95 or (top["best"] >= 0.6 and top["share"] >= 0.45):
+            conf = "high"
+        elif top["best"] >= 0.45 and top["share"] >= 0.3:
+            conf = "medium"
+        else:
+            conf = "low"
+        return {"path": rel, "kind": "Note" if rel.lower().endswith(".md") else documents.kind(rel), "suggestions": ranked[:max(1, limit)],
+                "confidence": conf, "byContent": bool(sims), "job": job}
+
+    def suggest_folder(self, path, limit=3):
+        r = self.folder_suggestions((path or "").strip().lstrip("/"), limit)
+        if not r["suggestions"]:
+            return f"No good match for {r['path']} – nothing similar is filed yet. Use vault_map and the file's contents to decide, or ask the user."
+        how = "by its contents and name" if r["byContent"] else "by name and keywords (it isn't embedded yet)"
+        rows = [f"{i}. {s['folder'] or '(vault root)'}/  — {int(s['share'] * 100)}% · {'; '.join(s['why'])}" for i, s in enumerate(r["suggestions"], 1)]
+        return f"Where {r['path']} probably belongs, {how} (confidence: {r['confidence']}):\n" + "\n".join(rows)
+
+    def inbox_suggestions(self, paths=None):
+        """Suggestions for every file in the inbox (or `paths`); files of the same job (same name) share one destination."""
+        if paths is None:
+            paths = [rel for rel, d in self._walk_files() if d == self.inbox or d.startswith(self.inbox + "/")]
+        rows = []
+        for rel in paths[:300]:
+            try:
+                rows.append(self.folder_suggestions(rel, 4))
+            except ToolError:
+                continue
+        groups = {}
+        for r in rows:
+            groups.setdefault((Path(r["path"]).parent.as_posix(), Path(r["path"]).stem.lower()), []).append(r)
+        for g in groups.values():
+            if len(g) < 2:
+                continue
+            pooled = {}
+            for r in g:
+                for s in r["suggestions"]:
+                    pooled[s["folder"]] = pooled.get(s["folder"], 0) + s["score"]
+            best = max(pooled, key=pooled.get) if pooled else None
+            for r in g:
+                r["group"] = [Path(x["path"]).name for x in g if x is not r]
+                if best is not None and (not r["suggestions"] or r["suggestions"][0]["folder"] != best):
+                    hit = next((s for s in r["suggestions"] if s["folder"] == best), None) or {"folder": best, "score": 0, "share": 0, "why": []}
+                    r["suggestions"] = [hit] + [s for s in r["suggestions"] if s is not hit]
+                    r["suggestions"][0]["why"] = (r["suggestions"][0]["why"] + ["kept with the rest of this job"])[:3]
+        return {"inbox": self.inbox, "files": rows}
+
+    def plan_move_files(self, moves):
+        if not isinstance(moves, list) or not moves:
+            raise ToolError("moves must be a list of {from, to}.")
+        if len(moves) > 300:
+            raise ToolError("At most 300 files per move.")
+        out, seen = [], set()
+        for i, m in enumerate(moves, 1):
+            if not isinstance(m, dict):
+                raise ToolError(f"Move {i}: expected {{from, to}}.")
+            frm, to = str(m.get("from") or "").strip().lstrip("/"), str(m.get("to") or "").strip().lstrip("/")
+            src = self.resolve(frm, False)[1]
+            if not src.is_file():
+                raise ToolError(f"Move {i}: {frm} not found.")
+            if to in ("", ".") or to.endswith("/") or (self.root / to).is_dir() or not Path(to).suffix:
+                dst = self.resolve(f"{to.rstrip('/')}/{src.name}" if to.strip("/.") else src.name, False)[1]
+            else:
+                dst = self.resolve(to, False)[1]
+            if dst.suffix.lower() != src.suffix.lower():
+                raise ToolError(f"Move {i}: {src.name} would change its type to {dst.suffix or 'nothing'}; keep the extension.")
+            if dst == src:
+                continue
+            if dst.exists() or self.rel(dst) in seen:
+                raise ToolError(f"Move {i}: {self.rel(dst)} already exists. Files are never overwritten – pick another folder or name.")
+            if self.is_tracker(src) or self.is_tracker(dst):
+                raise ToolError(f"Move {i}: files in '{self.tracker}' are managed by the tracker.")
+            seen.add(self.rel(dst))
+            out.append({"from": self.rel(src), "to": self.rel(dst), "newFolder": not dst.parent.exists(),
+                        "reason": str(m.get("reason") or "")[:200], "confidence": str(m.get("confidence") or "")[:10].lower()})
+        if not out:
+            raise ToolError("Nothing to move – every file is already where it was asked to go.")
+        return {"kind": "moves", "moves": out, "path": "", "summary": f"Move {len(out)} file{'s' if len(out) > 1 else ''}" + (f" from {self.inbox}" if all(x['from'].startswith(self.inbox + '/') for x in out) else "")}
 
     def recent_notes(self, days=7, limit=30):
         days, limit = max(1, min(90, int(days or 7))), max(1, min(100, int(limit or 30)))
@@ -401,13 +726,15 @@ class Tools:
 
     @staticmethod
     def diff(plan):
-        if plan["kind"] == "move":
+        if plan["kind"] in ("move", "moves"):
             return ""
         a = (plan["before"] or "").splitlines()
         b = plan["after"].splitlines()
         return "\n".join(difflib.unified_diff(a, b, "before", "after", n=2, lineterm=""))
 
     def preview(self, plan):
+        if plan["kind"] == "moves":
+            return {"kind": "moves", "path": "", "summary": plan["summary"], "diff": "", "moves": plan["moves"]}
         out = {"kind": plan["kind"], "path": plan["path"], "summary": plan["summary"], "diff": self.diff(plan)}
         if plan["kind"] == "move":
             out["to"] = plan["to"]
@@ -425,6 +752,8 @@ class Tools:
 
     def apply(self, plan, label):
         uid = time.strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(3)
+        if plan["kind"] == "moves":
+            return self._apply_moves(plan, label, uid)
         if plan["kind"] == "move":
             src, dst = self.root / plan["path"], self.root / plan["to"]
             links = self.backlinks(plan["path"])
@@ -444,6 +773,23 @@ class Tools:
         self._save_undo(uid, {**record, "summary": plan["summary"], "at": time.time()})
         return {"undoId": uid, "commit": commit, "backlinks": links, "paths": paths}
 
+    def _apply_moves(self, plan, label, uid):
+        done, failed = [], []
+        for m in plan["moves"]:
+            src, dst = self.root / m["from"], self.root / m["to"]
+            try:
+                if dst.exists():
+                    raise OSError("something with that name is already there")
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                os.rename(src, dst)
+                done.append([m["from"], m["to"]])
+            except OSError as e:
+                failed.append({"from": m["from"], "to": m["to"], "error": str(e)})
+        commit = git_commit_moves(self.root, done, f"Assistant: {label or plan['summary']}") if self.git_on and done else None
+        if done:
+            self._save_undo(uid, {"kind": "moves", "moves": done, "summary": plan["summary"], "at": time.time()})
+        return {"undoId": uid if done else None, "commit": commit, "backlinks": [], "paths": [p for pair in done for p in pair], "moved": done, "failed": failed}
+
     # ----- undo -----
     def _save_undo(self, uid, rec):
         self.undo_dir.mkdir(parents=True, exist_ok=True)
@@ -462,6 +808,22 @@ class Tools:
             raise ToolError("That change can no longer be undone here (use git history instead).")
         if rec.get("undone"):
             raise ToolError("Already undone.")
+        if rec["kind"] == "moves":
+            back, stuck = [], []
+            for frm, to in reversed(rec["moves"]):
+                src, dst = self.root / to, self.root / frm
+                if src.exists() and not dst.exists():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    os.rename(src, dst)
+                    back.append([to, frm])
+                else:
+                    stuck.append(to)
+            if not back:
+                raise ToolError("Those files were moved or changed again since; nothing was undone.")
+            commit = git_commit_moves(self.root, back, f"Undo assistant: {rec.get('summary', '')}") if self.git_on else None
+            rec["undone"] = True
+            f.write_text(json.dumps(rec), encoding="utf-8")
+            return {"commit": commit, "paths": [p for pair in back for p in pair], "stuck": stuck}
         if rec["kind"] == "move":
             src, dst = self.root / rec["to"], self.root / rec["from"]
             if not src.exists() or dst.exists():

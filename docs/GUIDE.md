@@ -5,7 +5,7 @@ The complete reference. For a quick overview, installation and first steps, see 
 
 A local web app that ties your work together: NWA (Network + Activity) hours per biweekly pay period, project budgets, deliverables, and sick and annual leave, plus your Obsidian vault and an AI assistant that works across all of it.
 
-Keystone writes everything into your vault as Markdown, and you can browse and edit the vault from the app. The assistant, **Ask Keystone**, sits beside every page.
+Keystone writes everything into your vault as Markdown, and you can browse and edit the vault from the app. It also reads the other files you keep there – PDFs, Office files, saved emails, Python scripts, notebooks and solver files such as Abaqus jobs – so you and the assistant can find a file by what's inside it, and it can suggest where new files in your **Inbox** belong. The assistant, **Ask Keystone**, sits beside every page.
 
 It runs on your computer only. Nothing is sent anywhere, unless you connect the optional AI assistant to a cloud model.
 
@@ -16,11 +16,11 @@ The defaults are set up for a US federal employee: a biweekly 80-hour pay period
 Requirements: **Python 3.10+** and a modern browser (Firefox, Chrome or Edge). Git and Obsidian are optional.
 
 ```bash
-pip install "keystone-worklog[search]"    # [search] adds LanceDB for the assistant's meaning search (optional)
+pip install "keystone-worklog[all]"       # [all] = [search] (LanceDB, meaning search) + [documents] (PDF, Word, PowerPoint, Excel)
 keystone-worklog                         # opens http://127.0.0.1:5000 – stop with Ctrl+C
 ```
 
-Without `[search]`, everything works, and the assistant uses keyword search only.
+Without `[search]`, everything works, and the assistant uses keyword search only. Without `[documents]`, the assistant can still search emails (`.eml`), text, CSV, HTML and RTF files, but not PDF or Office files.
 
 | Option | |
 | --- | --- |
@@ -42,10 +42,21 @@ The startup message shows the exact path.
 git clone https://github.com/<you>/keystone-worklog && cd keystone-worklog
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python app.py                                          # or: pip install -e ".[search]" && keystone-worklog
+python app.py                                          # or: pip install -e ".[all]" && keystone-worklog
 ```
 
 Run from a checkout, the data stays in `./data`, which is git-ignored.
+
+### Try it with demo data
+
+`scripts/make_demo.py` builds a complete, fictional setup in `./demo` (git-ignored): four projects with budgets, seven pay periods of hours, deliverables, follow-ups, leave and travel, and an Obsidian vault with project notes, a specs PDF, Word, Excel and PowerPoint files, saved emails, Abaqus jobs (one that finished, one that failed), a Python script, a notebook – and an `Inbox/` with nine files to file. Dates are relative to today, so it always looks current. It also writes `demo/meetings.ics` to try **Board → Calendar → Import calendar**.
+
+```bash
+python scripts/make_demo.py                              # --force rebuilds it, --llm-from data/llm.json copies your AI profiles
+KEYSTONE_DATA_DIR=demo/data python app.py --port 5050    # your real data/ is not touched
+```
+
+It needs the `[documents]` packages to write the Office files. The screenshots in the README were taken from it.
 
 ### Computers without internet (air-gapped)
 
@@ -72,8 +83,8 @@ keystone-worklog-bundle --skip-wheels --dest some/folder                       #
 Copy `models/` and `wheels/` to the offline computer (USB drive, and so on) and run:
 
 ```bash
-pip install --no-index --find-links wheels "keystone-worklog[search]"
-keystone-worklog --models-dir models
+pip install --no-index --find-links wheels "keystone-worklog[all]"
+keystone-worklog --models-dir models --offline
 ```
 
 **What the offline computer needs installed:**
@@ -91,16 +102,16 @@ Nothing else is downloaded at runtime: the Markdown, math (KaTeX) and sanitizer 
 
 | Tab | What it's for |
 | --- | --- |
-| **Today** | Your home page: hours today and this pay period, leave balances, a start/stop timer, **Log my day**, cards due soon, recent notes, the pay-period check, and **Brief me** / **Weekly status report** buttons for Keystone. |
-| **Timesheet** | One pay period (two Sun–Sat weeks). Each row has a project, Network, Activity, pay code and TS, plus hours per day. The top card shows your total against 80 h, split by type. Includes the pay-period check, **Fill from schedule**, **Same as last week** and **Mark as submitted**. |
+| **Today** | Your home page: hours today and this pay period, leave balances, a start/stop timer, **Log my day**, cards due soon, recent notes, the pay-period check, and **Brief me** / **Weekly status report** buttons for Keystone. A banner reminds you when the pay period ends within 3 days (or last period was never marked submitted). **Heads up** lists projects over 80% of budget, over budget or running out within 4 weeks, annual leave over the carry-over limit, and timer time not yet logged. **Today's meetings** shows imported calendar events. The **timer** keeps stopped time in a log: start another project to switch, then **Review & log** splits the day's time into quarter hours (optionally scaled to fill the hours left in the day). |
+| **Timesheet** | One pay period (two Sun–Sat weeks). Each row has a project, Network, Activity, pay code and TS, plus hours per day. The top card shows your total against 80 h, split by type. Includes the pay-period check, **Fill from schedule**, **Same as last week** and **Mark as submitted**. **My usual** saves a pay period as your usual pattern and fills the empty days of another from it, skipping holidays (filled as LH), out-of-office days and days that already have hours. |
 | **Projects** | Your list of Network + Activity pairs with a name and a budget of chargeable hours. Shows hours used and remaining, deliverable progress, and a link to the project's note. |
-| **Board** | A kanban board of deliverables (To do / In progress / Blocked / Done), each linked to a project. Drag cards between columns, or click one to edit it. **Calendar** shows cards on their due dates; drag a card onto a day to set its due date. It also shows days you're out of office: add annual leave, sick leave, travel or other time away with **Out of office** (or double-click a day), and LA/LS hours you've entered on the Timesheet appear on their own. |
+| **Board** | A kanban board of deliverables (To do / In progress / Blocked / Done), each linked to a project. Drag cards between columns, or click one to edit it. **Calendar** shows cards on their due dates; drag a card onto a day to set its due date. It also shows days you're out of office: add annual leave, sick leave, travel or other time away with **Out of office** (or double-click a day), and LA/LS hours you've entered on the Timesheet appear on their own. Annual and sick leave can also put the hours on the timesheet (scheduled hours on each workday, holidays skipped); the dialog shows the balance it leaves and warns about going negative or staying over the carry-over limit. Editing or deleting the entry takes those hours back off. **Import calendar** reads an `.ics` export from Outlook, Google or Apple (read-only, stored only in your data file) and shows meetings on the calendar; click one to charge its time to a project – a project whose name or network is in the title is suggested. |
 | **Follow-ups** | Emails you owe a reply: from, subject, reply-by date, project, status (To reply / Waiting on them / Done). Import a saved `.eml`, paste an email (From/Subject are filled in), or capture one. **Draft reply ✦** has Keystone write a reply for you to copy. It never sends anything. |
-| **Reports** | Budget burn-down (pick a project) plus a burn-rate table for every project, leave forecast with a use-or-lose warning, and hours by project by month (CSV or a vault note). **Avg burn** = RG hours in the last 4 completed weeks ÷ the number of those weeks, counting only weeks since the project was first charged (before a full week exists, it uses this week so far). **Weeks left** = budget left ÷ avg burn. |
-| **Notes** | Browse and edit the Markdown notes in your Obsidian vault, with live preview, `[[wikilinks]]` and clickable checkboxes. |
+| **Reports** | Budget burn-down (pick a project) plus a burn-rate table for every project, leave forecast with a use-or-lose warning, hours by project by month – the last 6 months or a whole year (CSV or a vault note) – and **pay period history** (what you marked submitted, and when). **Print / PDF** prints the page in light colours; choose *Save as PDF* in the print dialog. **Avg burn** = RG hours in the last 4 completed weeks ÷ the number of those weeks, counting only weeks since the project was first charged (before a full week exists, it uses this week so far). **Weeks left** = budget left ÷ avg burn. |
+| **Notes** | Browse and edit the Markdown notes in your Obsidian vault, with live preview, `[[wikilinks]]` and clickable checkboxes. Documents (PDF, Office, emails, code, solver files…) are listed too and open as a PDF viewer or as their text. **File the inbox** appears when there are files in `Inbox/`. |
 | **Assistant** | Full-width chat with Keystone, with your chat history in a sidebar. |
 | **Leave** | Sick and annual leave balances, and a ledger for each pay period. |
-| **Settings** | Pay period start, leave rates and starting balances, the Obsidian vault, and backups. |
+| **Settings** | Pay period start, leave rates and starting balances, the Obsidian vault and its inbox folder, the AI assistant and which files it searches, the **Search index** status, and backups. |
 
 ### Work schedule, holidays and the pay-period check
 
@@ -154,9 +165,9 @@ The first capture of a day adds its heading. Anything you write in the note your
 
 ### Timer, command palette, reminders
 
-- **Timer:** start it on the Today page. It shows in the top bar while running, and **Stop & log** adds the time (rounded to the nearest quarter hour) to that day's row for the project.
-- **`Ctrl+K` (or Search in the top bar):** jump to any tab, note, project or card, or run commands like *Start timer*, *Log my day*, *Brief me*, *Weekly status report*, *Previous/Next pay period*, *New meeting note*.
-- **Reminders** (Settings → Reminders & backups): a browser notification once a day, while Keystone is open, for cards and replies that are overdue or due today or tomorrow.
+- **Timer:** start it on the Today page; it shows in the top bar while running. **Stop** keeps the time in the timer log, and picking another project while one runs **switches** to it. When you're done for the day, **Review & log** turns the day's sessions into timesheet hours, rounded to quarter hours with the total kept (or split by tracked time to fill the hours left in the day). Time not logged by the next day shows under *Heads up*.
+- **`Ctrl+K` (or Search in the top bar):** jump to any tab, note, project or card, or run commands like *Start timer*, *Log my day*, *Brief me*, *Weekly status report*, *File my inbox*, *Previous/Next pay period*, *New meeting note*.
+- **Reminders** (Settings → Reminders & backups): a browser notification once a day, while Keystone is open, for cards and replies that are overdue or due today or tomorrow, and when the pay period is about to end.
 
 ### Pay codes
 
@@ -217,6 +228,8 @@ Keystone/
 - **Editing in both places:** if a note changed in Obsidian since you opened it here, the app asks which version to keep instead of overwriting it.
 - **Delete:** moves the note or image to the vault's `.trash` folder, the same place Obsidian uses.
 - **Obsidian button:** opens the current note in the Obsidian app.
+- **Documents:** PDFs open in the browser's own viewer (**Pages**) or as extracted text (**Text**); other documents show their text – code and solver output in a fixed-width font, with an *Errors, warnings and status* summary at the top of solver files. **Open in app** opens a file with its usual program on your computer (never scripts or programs), **Show in folder** reveals it, and the ✦ button asks Keystone to summarize it. Links such as `[[Bridge spec.pdf#page=12]]` open a PDF at that page.
+- **Inbox:** when `Inbox/` (or the folder set in Settings) has files, a **File the inbox** button appears above the tree – see [Filing the inbox](#filing-the-inbox).
 
 ### Right-click menu in the file tree
 
@@ -225,6 +238,8 @@ Keystone/
 | A folder | New note here · New from template ▸ *(each template)* · New folder here · Rename folder · Copy folder path |
 | A note | Open · New note in this folder · New from template ▸ · Copy link `[[…]]` · Open in Obsidian · Rename · Delete |
 | An image | Preview · Insert into the open note · Copy embed `![[…]]` · Open in Obsidian · Rename · Delete |
+| A document | View here · Open in its app · Show in folder · Ask Keystone to summarize it · Copy link · Copy path |
+| The Inbox folder | File these files… · Ask Keystone to file them · then the usual folder options |
 | The vault name or empty space | New note or new from template in the vault root · New folder |
 
 The menu also opens with the keyboard (the Menu key or `Shift+F10`). Use `↑ ↓` to move, `Enter` to choose and `Esc` to close. Renaming doesn't update links in other notes. Obsidian does that when you rename inside Obsidian.
@@ -266,8 +281,9 @@ In **Settings → AI assistant**, add one or more **profiles**. Any server with 
 
 | Tool | |
 | --- | --- |
-| `search_notes` | Keyword search plus meaning search (see below), merged |
-| `read_note`, `list_folder`, `list_templates`, `get_open_note` | Read the vault, the template list, and the note you have open (plus any selected text) |
+| `search_notes` | Keyword search plus meaning search (see below), merged – notes and documents, with the page, slide, sheet or function a match is in |
+| `read_note`, `read_document`, `list_folder`, `list_templates`, `get_open_note` | Read notes and documents (by parts: pages, slides, sheets, cells…), folders, the template list, and the note you have open (plus any selected text) |
+| `vault_map`, `suggest_folder`, `move_files` | Filing: the folder structure with counts, examples and folder descriptions; where a file probably belongs; and moving any files, shown as one editable table you approve |
 | `create_note`, `edit_note`, `append_to_note`, `move_note` | Change the vault. `edit_note` replaces one exact passage, so it can't hit the wrong spot. `move_note` never overwrites and reports notes that link to the old name. |
 | `tracker_summary`, `add_deliverable`, `update_deliverable`, `remove_deliverable`, `get_timesheet`, `update_timesheet`, `list_followups`, `add_followup`, `update_followup` | Only offered to profiles with tracker access |
 | `recent_notes` | Notes changed in the last N days (used by the weekly status report) |
@@ -290,12 +306,55 @@ To go back:
 
 ### Meaning search (local embeddings)
 
-Notes are split into heading-aware chunks and embedded **in your browser** with `all-MiniLM-L6-v2`, a 23 MB quantized model that runs in a background worker. The vectors are stored on disk with **LanceDB** in `data/index/`.
+Notes and documents are split into chunks (by heading, page, slide, sheet, function or cell) and embedded **in your browser** with `all-MiniLM-L6-v2`, a 23 MB quantized model that runs in a background worker. The vectors are stored on disk with **LanceDB** in `data/index/`.
 
-- **Staying current:** the index updates as you go. Notes you save, notes the assistant changes and notes edited in Obsidian are re-embedded within a few seconds while the app is open. Only changed notes are processed.
+- **Staying current:** the index updates as you go. Files you save, files the assistant changes and files edited elsewhere are re-embedded within a few seconds while the app is open. Only changed files are processed, each at most once per pass; a file that keeps changing (a solver job that is still running, a log) waits until it has been quiet for 30 seconds.
 - **Memory:** the model uses roughly 100 MB while it works and is unloaded after 5 idle minutes.
 - **Offline:** the model and its runtime are downloaded once, through the app, into `data/models/`, and served locally after that.
 - **Turn it off,** or rebuild the index, in Settings.
+
+### Documents: PDF, Word, PowerPoint, Excel, emails
+
+With **Settings → AI assistant → Search documents too** (on by default), the assistant searches inside the documents in your vault, not just your notes, and can find a file by what it says.
+
+| Type | Read with | Results point to |
+|---|---|---|
+| PDF (`.pdf`, with a text layer – OCR'd scans work) | pypdf | the page |
+| Word (`.docx`) | python-docx | the heading; tables included |
+| PowerPoint (`.pptx`) | python-pptx | the slide and its title; speaker notes included |
+| Excel (`.xlsx`) | openpyxl | the sheet; rows read as “Header: value” |
+| Emails (`.eml`, or saved as `.txt` with From/Sent/To/Subject at the top) | built in | the email; readable attachments are searched too |
+| Text, CSV, HTML, RTF | built in | – |
+| Python (`.py`) | built in | the function or class (`def load_case (line 42)`) |
+| Jupyter notebooks (`.ipynb`) | built in | the cell, with its text output and errors |
+| Abaqus and other solver files (`.inp`, `.msg`, `.dat`, `.sta`, `.log`, `.out`, Nastran, ANSYS, LS-DYNA…) | built in | **Errors, warnings and status** (every `***ERROR`/`***WARNING`, counted once, plus completion lines), then the text |
+| Any other plain-text file (code, configs, data, files without an extension) | built in | – |
+
+- **Everything runs on this computer:** text is extracted by the Keystone server, embedded by the same in-browser model as notes, and stored in `data/index/`. Extracted text is cached in `data/index/docs/` and re-read only when a file changes.
+- **Finding files:** ask *“find the spec that covers bearing pads”*. Results show the file, where the match is (page, slide, sheet, email) and a snippet. Links like `[[Bridge spec.pdf#page=12]]` open the PDF at that page.
+- **Keyword + meaning:** exact terms (network numbers, drawing numbers, names) are found by keyword search, ideas by meaning search; results from both are merged.
+- **Notes tab:** documents appear in the file tree. A PDF opens in the browser's own viewer (**Pages**) or as extracted text (**Text**); other types show their text. **Open in app** opens the file with its usual program on this computer and **Show in folder** reveals it.
+- **Plain-text files:** a file counts as text if its first 8 KB are text, so binary files with text-like names (a binary `.dat`, an Outlook `.msg`, `.odb`, `.prt`, `.sim`) are skipped. Big solver output is read as its start and end, and the whole file is scanned for errors, warnings and completion lines; large Abaqus input decks also keep a **Model keywords** section (`*Material`, `*Step`, element types). Turn off **Any other plain-text file** in Settings to keep only the listed types. Scripts are never launched by **Open in app** – use **Show in folder**.
+- **Limits:** PDF and Office files over 60 MB are skipped; spreadsheets are read up to 5,000 rows per sheet. A PDF without a text layer, or a broken or password-protected file, is still found by its name; Settings lists the files that couldn't be read.
+- **Speed:** the first index of a large folder of documents takes a while (roughly 20–50 chunks a second, while Keystone is open); after that only changed files are processed. Notes are indexed first.
+- **Not supported:** old binary Office files (`.doc`, `.xls`, `.ppt`) and Outlook `.msg` files are listed and can be opened in their app, but aren't searched. Save emails as `.eml` or text.
+
+### Filing the inbox
+
+Drop new files into the vault's **Inbox** folder (change its name in **Settings → Obsidian vault**). **Notes → File the inbox** (also on the Inbox folder's right-click menu, in Ctrl K, and in Today's *Heads up*) opens a review table with a suggested folder for every file:
+
+- **How it decides:** files with the **same name or job name** elsewhere (`girder_v4.inp` goes where `girder_v3.inp` is), and files with **similar content** in the search index – only matches clearly above the background count, and each extra match from the same folder counts half, so a big folder can't win by volume. Before a file is embedded, its most telling words are used instead. Files of the same job in the inbox are kept together.
+- **Confidence:** *High* and *Medium* rows start ticked; *Low* and *No match* rows start unticked. Click another suggestion or type any folder (new folders are created); untick anything to leave it.
+- **Moving:** nothing moves until you click **Move**. Files are never overwritten or deleted, the whole batch can be undone in one click, and with git turned on the move is committed – only for files git already tracked, so moving a large `.odb` or PDF never adds it to the repository.
+- **With the assistant:** **Ask Keystone instead** (or *“file my inbox”*) lets the model use `vault_map` (folders, counts, examples and folder descriptions from a folder note or README), `suggest_folder` and `read_document` to decide, and propose everything in one `move_files` table that you can edit before applying. If you change its plan, it offers to record the lesson in a **Filing rules** note, which it reads next time.
+
+### Search index status
+
+**Settings → Search index** shows what the assistant can search: a progress bar, the file being read right now and about how long is left, and a table of every file – **Indexed** (with its number of chunks and when), **Waiting**, **Changed** (re-indexing), or **Couldn't read** (with the reason). Filter it by status or name, start a pass with **Index now**, or **Rebuild** from scratch. While indexing runs, a **Indexing 43%** chip in the top bar shows progress on every page; click it for the details. Indexing happens in the browser tab, so it only runs while Keystone is open.
+
+### Offline / air-gapped
+
+Start with `keystone-worklog --offline` (or set `KEYSTONE_OFFLINE=1`) and Keystone never connects to the internet: the embedding model must come from the bundle (`--models-dir`), and nothing is downloaded. Document reading, embedding, search and opening files all happen on the computer. The only thing that can leave it is what you send to an AI model profile you set up – use a local model (Ollama, LM Studio, llama.cpp) to keep everything on the machine.
 
 ### Privacy
 
@@ -327,7 +386,9 @@ Paths are inside your data folder: `./data` in a source checkout, otherwise the 
 The app can read and write files in your vault, so:
 
 - It only listens on `127.0.0.1` and refuses requests addressed to any other host name.
-- Note reads and writes are locked inside the chosen vault folder. Paths that use `..`, absolute paths, hidden folders like `.obsidian`, and symlinks pointing outside the vault are all refused. Only `.md` files can be edited, and only images can be served for embeds.
+- Note reads and writes are locked inside the chosen vault folder. Paths that use `..`, absolute paths, hidden folders like `.obsidian`, and symlinks pointing outside the vault are all refused. Only `.md` files can be edited.
+- Documents are only read. PDFs are shown in the browser's own viewer; every other document is offered as a download, never rendered as a page of the app. **Open in app** only opens notes, images and documents – never scripts or programs (`.py`, `.sh`, `.bat`, `.exe`…), which can only be shown in their folder.
+- Moving files (filing the inbox) never overwrites or deletes anything and never leaves the vault; a whole batch is undone in one step.
 - Uploads must be PNG, JPG, GIF, WebP or BMP images under 25 MB, and never overwrite an existing file.
 - The folder picker can list folder names (not file contents) anywhere on your computer. That is how you choose the vault.
 
@@ -340,12 +401,14 @@ keystone_worklog/
   app.py               Flask server: data API, folder picker, notes API, assistant routes, the keystone-worklog command
   vault.py             Markdown export and syncing deliverable ticks back from the vault
   assistant.py         assistant back end: profiles and keys, chat proxy, vault tools, undo, git commits
-  vector_index.py      note chunking and the LanceDB vector index
+  vector_index.py      note and document chunking and the LanceDB vector index
+  documents.py         text from PDF, Word, PowerPoint, Excel, emails, code, notebooks, solver files and any text file (+ the text cache)
   offline_bundle.py    keystone-worklog-bundle: model + Python packages for air-gapped computers
   static/index.html    the whole web app (HTML, CSS and JS in one file)
   static/embed-worker.js  in-browser embedding model (runs in a Web Worker)
   static/vendor/       marked (Markdown), DOMPurify (HTML sanitizer) and KaTeX (math)
 app.py                 runs the app from a source checkout (python app.py)
+scripts/make_demo.py   builds the demo data (./demo) used for the README screenshots
 tests/                 Python tests (unittest) and tests/js/ (Node's built-in test runner)
 pyproject.toml         package metadata (PyPI name: keystone-worklog)
 LICENSE                MIT
@@ -357,13 +420,13 @@ THIRD_PARTY_NOTICES.md licenses of the bundled and downloaded components
 No extra packages are needed. The Python tests use `unittest`, and the JavaScript tests use Node 18+'s built-in runner.
 
 ```bash
-python -m unittest discover -s tests -v     # API, vault export and sync, assistant tools, capture, chat proxy, index
-node --test tests/js/*.test.mjs             # holidays, schedules, pay-period check, burn rate, capture and email parsing
+python -m unittest discover -s tests -v     # API, vault export and sync, assistant tools, capture, chat proxy, index, documents, filing
+node --test tests/js/*.test.mjs             # holidays, schedules, pay-period check, burn rate, capture, emails, leave, timer, calendar import
 ```
 
 - **Isolation:** each Python test gets its own temporary data folder and vault (through `KEYSTONE_DATA_DIR`), so tests never touch your own `data/`.
 - **The chat proxy** is tested against a small OpenAI-compatible mock server (`tests/mock_llm.py`). No API key or network is needed.
-- **Skipped when missing:** tests that need Git or LanceDB are skipped if those aren't installed.
+- **Skipped when missing:** tests that need Git, LanceDB or the document packages are skipped if those aren't installed.
 - **JavaScript tests** load the script from `static/index.html` into a sandbox (`tests/js/load_app.mjs`) and call the real functions.
 - **Continuous integration:** `.github/workflows/tests.yml` runs both suites on Linux, Windows and macOS. It also builds the package, checks it with `twine check`, and starts the installed command.
 

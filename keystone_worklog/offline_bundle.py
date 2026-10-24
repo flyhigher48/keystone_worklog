@@ -12,8 +12,8 @@ Run on a computer WITH internet, then copy the output folder to the offline one:
 
 On the offline computer:
 
-    pip install --no-index --find-links wheels "keystone-worklog[search]"
-    keystone-worklog --models-dir models
+    pip install --no-index --find-links wheels "keystone-worklog[all]"
+    keystone-worklog --models-dir models --offline
 """
 import argparse
 import shutil
@@ -72,7 +72,7 @@ def fetch_wheels(dest, platforms, python_version):
         subprocess.run([*pip, "wheel", "--no-deps", "-w", str(wheels), str(PROJECT_ROOT)], check=True)
         reqs = ["-r", str(PROJECT_ROOT / "requirements.txt")]
     else:
-        reqs = [f"keystone-worklog[search]=={__version__}"]
+        reqs = [f"keystone-worklog[all]=={__version__}"]
     print("Downloading Python packages…")
     subprocess.run([*pip, "download", *reqs, "-d", str(wheels), "--only-binary=:all:", *target], check=True)
     files = list(wheels.glob("*.whl"))
@@ -93,8 +93,8 @@ def main():
     if not args.skip_wheels:
         fetch_wheels(dest, args.platform, args.python_version)
     print(f"\nNow copy {dest / 'models'} and {dest / 'wheels'} to the offline computer and run:\n"
-          '  pip install --no-index --find-links wheels "keystone-worklog[search]"\n'
-          "  keystone-worklog --models-dir models")
+          '  pip install --no-index --find-links wheels "keystone-worklog[all]"\n'
+          "  keystone-worklog --models-dir models --offline")
 
 
 if __name__ == "__main__":

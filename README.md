@@ -18,15 +18,15 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/today.png" alt="The Today page: hours today and this pay period, leave balances, a running timer, today's captured notes, what's due soon and the pay-period check" width="900">
+  <img src="docs/screenshots/today.png" alt="The Today page: a pay-period reminder, hours and leave balances, the timer with unlogged time, a Heads up list of budget and leave warnings, today's meetings, captured notes and what's due soon" width="900">
 </p>
 
-**Keystone** is a timesheet that checks itself, a project board, a leave planner and an Obsidian-powered notebook. An assistant ties them together and can log your hours, update your cards and write your notes, but only after you click **Apply**.
+**Keystone** is a timesheet that checks itself, a project board, a leave planner and an Obsidian-powered notebook that can search inside every file you keep: PDFs, Office files, emails, Python and Abaqus jobs. An assistant ties them together and can log your hours, update your cards, write your notes and file your documents, but only after you click **Apply**.
 
 It was built for people who charge time to **network/activity (NWA) numbers** on a biweekly pay period, with leave codes, budgets per project and a portal to paste hours into. It works just as well for anyone who wants a single place for hours, deadlines and notes.
 
 ```bash
-pip install "keystone-worklog[search]"
+pip install "keystone-worklog[all]"
 keystone-worklog
 ```
 
@@ -37,6 +37,8 @@ keystone-worklog
 - ⏱️ **A timesheet that catches mistakes before you submit.** Missing days, short totals, holidays without holiday hours, projects over budget. It fills days from your schedule and copies hours straight into your time-entry portal.
 - 📈 **Know when a budget runs out.** Burn-down per project, average hours per week, and a run-out date you can check by hand.
 - 🗂️ **Your notes stay plain Markdown in Obsidian.** Projects, timesheets, deliverables and follow-ups are written into your vault. Tick a checkbox in Obsidian and the Board updates.
+- 🔎 **Find any file by what's inside it.** PDFs, Word, PowerPoint, Excel, saved emails, Python scripts, notebooks and solver files (Abaqus `.inp`/`.msg`/`.dat`/`.sta`) are searched by keywords and by meaning, and results point to the page, slide, sheet or function.
+- 📥 **An inbox that files itself.** Drop files into `Inbox/` and Keystone suggests where each one belongs, from similar files and job names already in your vault. Review the table, click **Move**, undo if needed.
 - 🤖 **An assistant that works with you.** "Log 8 hours to each project for today." "Push every card without a date to next Friday." "Summarize this note." Every change shows up as a diff to **Apply** or **Reject**, and can be undone.
 - 🔒 **Local-first and private.** Keystone runs on `127.0.0.1`. Use a local model (Ollama, LM Studio, llama.cpp) and nothing leaves your machine. API keys never reach the browser.
 - ✈️ **Works without internet.** One command bundles Keystone, its Python packages and the embedding model for an air-gapped computer.
@@ -51,18 +53,33 @@ Two Sun–Sat weeks per pay period, with pay codes (RG, LA, LS, LH) and telework
 <img src="docs/screenshots/timesheet.png" alt="Timesheet with the pay-period check, scheduled hours in each day header and a budget left per project" width="900">
 
 ### 🤖 Ask Keystone, beside every page
-Open the assistant with **✦ Ask** or `Ctrl+J`. It searches and reads your vault (by keywords *and* by meaning, using a small model that runs in your browser), knows which page you're on, and proposes changes for you to approve. Bring any OpenAI-compatible model: a **local Gemma or Llama**, or a cloud provider.
+Open the assistant with **✦ Ask** or `Ctrl+J`. It searches and reads your vault (by keywords *and* by meaning, using a small model that runs in your browser), including what's **inside your PDFs, Word, PowerPoint and Excel files and saved emails**, so it can find a file for you and tell you the page. It knows which page you're on and proposes changes for you to approve. Bring any OpenAI-compatible model: a **local Gemma or Llama**, or a cloud provider.
 
 <img src="docs/screenshots/assistant.png" alt="Notes tab with a note containing LaTeX math, and the assistant proposing an edit as a diff with Apply and Reject buttons" width="900">
 
-### 📋 Deliverables on a board and a calendar
+### 🔎 Search inside every file, and file the inbox
+Keystone reads the documents in your vault on your own computer and embeds them with a small model that runs in your browser, so the assistant finds files by what they say. Solver output gets an **Errors, warnings and status** summary, so *"why did girder_v3 fail?"* finds the right `.msg`. New files dropped into `Inbox/` get a suggested folder each; you review them in one table.
+
+| A solver message file in the Notes tab | File the inbox |
+| --- | --- |
+| <img src="docs/screenshots/document.png" alt="An Abaqus .msg file open in the Notes tab, with its errors and warnings summarised at the top" width="440"> | <img src="docs/screenshots/inbox.png" alt="The File the inbox table: each file with a suggested folder, confidence and the reason, such as a matching job name or a similar file" width="440"> |
+
+**Settings → Search index** shows which files have been read and embedded, what's waiting and anything that couldn't be read, and an *Indexing 43%* chip in the top bar shows progress while it runs.
+
+<img src="docs/screenshots/search-index.png" alt="Search index card: progress bar, filters for Indexed, Waiting and Couldn't read, and a table of files with type, size, status, chunks and when they were indexed" width="900">
+
+### 📋 Deliverables, leave and meetings on one calendar
 
 | Kanban board | Calendar |
 | --- | --- |
-| <img src="docs/screenshots/board.png" alt="Kanban board with To do, In progress, Blocked and Done columns" width="440"> | <img src="docs/screenshots/calendar.png" alt="Month calendar with cards on their due dates" width="440"> |
+| <img src="docs/screenshots/board.png" alt="Kanban board with To do, In progress, Blocked and Done columns" width="440"> | <img src="docs/screenshots/calendar.png" alt="Month calendar with cards on their due dates, travel and annual leave, federal holidays and meetings imported from an .ics file" width="440"> |
+
+Mark annual leave, sick leave or travel as **Out of office**; leave can put its hours on the timesheet for you and shows the balance it leaves. Import an `.ics` file from Outlook, Google or Apple to see meetings and charge their time to a project.
+
+<img src="docs/screenshots/leave.png" alt="Out of office dialog adding three days of annual leave, showing the hours it adds, the balance afterwards and the carry-over limit" width="900">
 
 ### 📈 Budgets, leave and hours at a glance
-Burn-down per project with a run-out date, a burn-rate table for every project, a leave forecast with a **use-or-lose** warning, and hours by project by month (export as CSV or a vault note).
+Burn-down per project with a run-out date, a burn-rate table for every project, a leave forecast with a **use-or-lose** warning, hours by project for the last 6 months or a whole year (CSV or a vault note), and a history of submitted pay periods. **Print / PDF** gives a clean report.
 
 <img src="docs/screenshots/reports.png" alt="Reports: burn-down chart with the projected run-out date and a burn-rate table" width="900">
 
@@ -81,8 +98,15 @@ Drop in a saved email or paste one from Outlook, set a reply-by date, and let Ke
 **Requirements:** Python 3.10+ and a modern browser (Firefox, Chrome or Edge). Obsidian, Git and an AI model are all optional.
 
 ```bash
-pip install "keystone-worklog[search]"   # drop [search] if you don't need meaning search
+pip install "keystone-worklog[all]"      # or plain keystone-worklog: no meaning search or document reading
 keystone-worklog                          # opens http://127.0.0.1:5000 — stop with Ctrl+C
+```
+
+**Try it with demo data first** (from a source checkout – a fictional vault with projects, specs, emails and Abaqus jobs, and an inbox to file; your own data is not touched):
+
+```bash
+python scripts/make_demo.py                     # creates ./demo
+KEYSTONE_DATA_DIR=demo/data python app.py --port 5050
 ```
 
 **Your first five minutes:**
@@ -103,6 +127,7 @@ keystone-worklog                          # opens http://127.0.0.1:5000 — stop
 | **Morning** | Open **Today**: hours to log, what's due, replies owed. Click **Brief me** for a summary from the assistant. |
 | **During the day** | `Ctrl+Shift+Space` to capture anything. Start the **timer** when you switch tasks. |
 | **End of day** | Stop the timer, or type what you did into **Log my day**, and the assistant turns it into timesheet hours. |
+| **New files** | Drop them into `Inbox/` in your vault, then **Notes → File the inbox**. |
 | **Friday** | **Weekly status report** drafts your report from hours, the Board and this week's notes, and saves it to your vault. |
 | **End of pay period** | Clear the **pay-period check**, **Copy for portal**, then **Mark as submitted**. |
 
@@ -110,7 +135,7 @@ keystone-worklog                          # opens http://127.0.0.1:5000 — stop
 
 | Keys | Action |
 | --- | --- |
-| `Ctrl+K` | Search everything and run commands: notes, projects, cards, "Start timer", "Next pay period"… |
+| `Ctrl+K` | Search everything and run commands: notes, projects, cards, "Start timer", "File my inbox", "Next pay period"… |
 | `Ctrl+Shift+Space` | Quick capture from anywhere |
 | `Ctrl+J` | Open or close the assistant |
 | `↑ ↓ ← →`, `Enter` | Move between hour cells on the timesheet |
@@ -129,7 +154,7 @@ keystone-worklog                          # opens http://127.0.0.1:5000 — stop
 
 ### Things to ask the assistant
 
-> *"Log 8 hours to each project for today."* · *"How many hours do I still need this pay period?"* · *"What's overdue on the Board?"* · *"Set a due date of next Friday on every card that has none."* · *"Summarize the note I have open and pull out the action items."* · *"Draft a reply to my oldest follow-up."* · *"How much annual leave will I have on December 31?"*
+> *"Log 8 hours to each project for today."* · *"How many hours do I still need this pay period?"* · *"What's overdue on the Board?"* · *"Set a due date of next Friday on every card that has none."* · *"Summarize the note I have open and pull out the action items."* · *"Draft a reply to my oldest follow-up."* · *"How much annual leave will I have on December 31?"* · *"Find the spec that covers elastomeric bearing pads."* · *"Which email from the county mentioned the culvert deadline?"* · *"Why did girder_v3 fail?"* · *"File my inbox."*
 
 ---
 
@@ -140,6 +165,7 @@ keystone-worklog                          # opens http://127.0.0.1:5000 — stop
 | `keystone-worklog --port 5001` | Use another port (or set `KEYSTONE_PORT`) |
 | `keystone-worklog --no-browser` | Don't open a browser window |
 | `keystone-worklog --models-dir PATH` | Use an offline embedding-model bundle (see below) |
+| `keystone-worklog --offline` | Never connect to the internet (or set `KEYSTONE_OFFLINE=1`) |
 | `KEYSTONE_DATA_DIR=PATH` | Keep the data in another folder, e.g. a second profile |
 
 **Where your data lives:**
@@ -175,8 +201,8 @@ keystone-worklog-bundle --platform win_amd64 --python-version 3.12   # match the
 Copy the resulting `models/` and `wheels/` folders over, then on the offline machine:
 
 ```bash
-pip install --no-index --find-links wheels "keystone-worklog[search]"
-keystone-worklog --models-dir models
+pip install --no-index --find-links wheels "keystone-worklog[all]"
+keystone-worklog --models-dir models --offline     # --offline: never connects to the internet
 ```
 
 ---
@@ -184,8 +210,9 @@ keystone-worklog --models-dir models
 ## Privacy and security
 
 - **Your computer only:** Keystone listens on `127.0.0.1` and refuses requests addressed to any other host.
+- **Documents are read, never changed:** PDFs, Office files, emails and text files are read on this computer to search them; their text is cached in `data/index/docs/`. **Open in app** only opens documents, notes and images – never programs or scripts.
 - **Notes stay in the vault:** the Notes tab and the assistant can only read and write `.md` files inside the vault you chose. Paths that escape it, hidden folders and symlinks pointing outside are refused.
-- **The assistant can't delete notes.** It can create, edit, append to and move them. Every change is a diff you approve, can be undone, and (optionally) becomes its own Git commit in your vault.
+- **Nothing is ever deleted or overwritten.** The assistant can create, edit, append to and move notes, and move files when filing; it can't delete. Moving a batch of files is one undo, and only files git already tracks are committed. Every change is a diff you approve, can be undone, and (optionally) becomes its own Git commit in your vault.
 - **API keys stay on the server**, in an owner-only file, and are never sent back to the browser.
 
 ---
@@ -197,6 +224,8 @@ The **[user guide](docs/GUIDE.md)** covers every feature in detail:
 - the Obsidian export and two-way sync;
 - the Notes editor, templates, math and images;
 - every assistant tool and the meaning-search index;
+- searching documents, solver files and code, and the search index status;
+- filing the inbox, out-of-office days, calendar import and the timer log;
 - backups and Git history.
 
 ---
@@ -206,7 +235,7 @@ The **[user guide](docs/GUIDE.md)** covers every feature in detail:
 ```bash
 git clone https://github.com/<you>/keystone-worklog && cd keystone-worklog
 python -m venv .venv && source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -e ".[search]"
+pip install -e ".[all]"
 python app.py                                            # runs from the checkout, with data in ./data
 
 python -m unittest discover -s tests -v                 # Python tests (no extra packages needed)
@@ -219,7 +248,9 @@ node --test tests/js/*.test.mjs                          # JavaScript tests (Nod
 | `keystone_worklog/static/index.html` | The whole web app in one file: HTML, CSS and JavaScript, no build step |
 | `keystone_worklog/assistant.py` | Model profiles, chat proxy, vault tools, undo, Git commits |
 | `keystone_worklog/vault.py` | Markdown export to Obsidian and syncing ticks back |
-| `keystone_worklog/vector_index.py` | Note chunking and the LanceDB index |
+| `keystone_worklog/vector_index.py` | Note and document chunking and the LanceDB index |
+| `keystone_worklog/documents.py` | Text from PDF, Word, PowerPoint, Excel, emails, code, notebooks and solver files |
+| `scripts/make_demo.py` | Builds the demo data used for the screenshots |
 | `tests/` | Python tests, a mock OpenAI-compatible server, and `tests/js/` |
 
 Contributions are welcome. Please open an issue to discuss bigger changes, and make sure both test suites pass. Continuous integration runs them on Linux, Windows and macOS. Releases go to PyPI automatically when a GitHub Release is published (see the [user guide](docs/GUIDE.md#releasing-maintainers)).
@@ -228,4 +259,4 @@ Contributions are welcome. Please open an issue to discuss bigger changes, and m
 
 ## License
 
-[MIT](LICENSE). Bundled components (marked, DOMPurify, KaTeX) and the downloaded embedding model keep their own licenses, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[MIT](LICENSE). Bundled components (marked, DOMPurify, KaTeX), the optional document readers (pypdf, python-docx, python-pptx, openpyxl) and the downloaded embedding model keep their own licenses, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
