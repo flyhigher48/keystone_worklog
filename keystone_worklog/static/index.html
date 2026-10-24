@@ -322,8 +322,12 @@ dialog.dlg.wide{width:min(1100px,calc(100vw - 32px))}
 .ix-bar i{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .4s}
 .ix-line{margin-top:8px;font-size:13px;color:var(--ink2)} .ix-cur{font-family:ui-monospace,monospace;font-size:12px}
 .ix-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px} .ix-n{color:var(--muted);font-weight:600;margin-left:2px}
-.ix-table{max-height:460px;overflow:auto} .ix-path{max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .ix-dir{color:var(--muted)}
+.ix-table{max-height:460px;overflow:auto}
+.ix-settings{border:1px solid var(--line2);border-radius:10px;padding:8px 12px;margin-bottom:12px} .ix-settings summary{cursor:pointer;font-weight:650;font-size:13px}
+.ix-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:10px} .ix-grid label:not(.sw){display:block;font-weight:650;font-size:13px;margin:0 0 5px} .ix-grid small{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+@media (max-width:760px){.ix-grid{grid-template-columns:1fr}} .ix-path{max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .ix-dir{color:var(--muted)}
 .docframe{flex:1;width:100%;border:0;min-height:calc(100vh - 170px);background:#fff}
+.docbar{display:flex;align-items:center;gap:6px;padding:6px 14px;font-size:12.5px;border-bottom:1px solid var(--line2)} .docbar a{display:inline-flex;align-items:center;gap:5px;color:var(--accent);text-decoration:none;font-weight:600} .docbar svg{width:13px;height:13px}
 .docview{flex:1;overflow:auto;padding:14px 22px 28px;max-height:calc(100vh - 170px)}
 .docsec h4{margin:16px 0 6px;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .docsec:first-child h4{margin-top:4px}
@@ -3676,7 +3680,10 @@ function viewNotes() {
         h('button', { class: 'btn ghost', title: 'Show in your file manager', 'aria-label': 'Show in folder', onclick: () => openInApp(N.path, true) }, icon('folder')),
         h('button', { class: 'btn ghost', title: 'Ask Keystone about this file', 'aria-label': 'Ask Keystone', onclick: () => askKeystone(`Read [[${baseName(N.path)}]] (${N.path}) with read_document and summarize it: what it is, the key points and any dates, numbers or decisions.`) }, icon('spark')),
         h('button', { class: 'btn ghost', title: 'Copy link [[…]]', 'aria-label': 'Copy link', onclick: () => copyText(`[[${baseName(N.path)}]]`).then(() => toast('Link copied')) }, icon('link'))),
-      textMode ? docTextView() : h('iframe', { class: 'docframe', src: fileUrl(N.path) + (N.page ? '#page=' + N.page : ''), title: baseName(N.path) }));
+      textMode ? docTextView() : [
+        h('div', { class: 'docbar' }, h('a', { href: fileUrl(N.path) + (N.page ? '#page=' + N.page : ''), target: '_blank', rel: 'noopener' }, icon('ext'), 'Open in a new tab'),
+          h('span', { class: 'hint', style: 'margin:0' }, ' – if the pages don\'t show here, use this or the Text view')),
+        h('iframe', { class: 'docframe', src: fileUrl(N.path) + (N.page ? '#page=' + N.page : ''), title: baseName(N.path) })]);
   } else if (N.kind === 'image') {
     const dims = h('span', { class: 'chip muted' }, '…');
     main = h('section', { class: 'card editor' },
@@ -4427,7 +4434,9 @@ function viewAssistant() {
 
 
 /* ---------- meaning search: in-browser embeddings → LanceDB on disk ---------- */
-const Emb = { worker: null, seq: 0, waits: new Map(), idle: null, progress: '' };
+const Emb = { worker: null, seq: 0, waits: new Map(), idle: null, progress: '', device: '', threads: 1, note: '' };
+const embBatch = () => (Emb.device === 'webgpu' ? 64 : 16);  // the GPU is fastest on big batches
+const embDeviceLabel = () => (Emb.device === 'webgpu' ? 'GPU' : Emb.device ? `CPU${Emb.threads > 1 ? ` · ${Emb.threads} threads` : ''}` : '');
 const embeddingsOn = () => !!(A.settings && A.settings.semantic && A.settings.semanticAvailable && state.settings.vaultPath);
 function embedWorker() {
   if (Emb.worker) return Emb.worker;
@@ -4438,6 +4447,7 @@ function embedWorker() {
     const w = Emb.waits.get(m.id);
     if (!w) return;
     Emb.waits.delete(m.id);
+    if (m.device) Object.assign(Emb, { device: m.device, threads: m.threads || 1, note: m.note || '' });
     m.error ? w.reject(new Error(m.error)) : w.resolve(m.vectors);
   };
   Emb.worker.onerror = e => {
@@ -4453,7 +4463,8 @@ function embed(texts) {
     if (Emb.waits.size || A.idx.running) { Emb.idle = setTimeout(idle, 60000); return; }
     if (Emb.worker) { Emb.worker.terminate(); Emb.worker = null; }
   }, 5 * 60000);
-  return new Promise((resolve, reject) => { Emb.waits.set(id, { resolve, reject }); w.postMessage({ id, texts }); });
+  const prefer = (A.settings && A.settings.embedDevice) || 'auto';
+  return new Promise((resolve, reject) => { Emb.waits.set(id, { resolve, reject }); w.postMessage({ id, texts, prefer }); });
 }
 async function embedQuery(q) {
   try { return (await Promise.race([embed([q]), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 90000))]))[0]; }
@@ -4483,18 +4494,20 @@ async function indexVault() {
   const done = new Set();
   try {
     for (let round = 0, cap = 0; ; round++) {
-      const j = await api('/api/index/next', { model: EMB_MODEL, limit: 4, skip: [...done].slice(-5000), settle: 30 });  // each file once per pass; files still being written wait
+      const j = await api('/api/index/next', { model: EMB_MODEL, limit: Emb.device === 'webgpu' ? 8 : 4, skip: [...done].slice(-5000), settle: 30 });  // each file once per pass; files still being written wait
       cap ||= j.remaining + 5;  // every round indexes at least one file
       if (round > cap) throw new Error('index is not settling – try Rebuild index in Settings');
       Object.assign(A.idx, { total: j.total, indexed: Math.max(0, j.total - j.remaining), settling: j.settling || 0 });
       setIdxNote();
-      if (!j.files.length) break;
+      if (!j.files.length && !j.notText) break;  // (a batch can be only files that turned out not to be text)
       for (const f of j.files) {
         const vecs = [];
         A.idx.current = { path: f.path, done: 0, total: f.chunks.length }; setIdxNote();
-        for (let i = 0; i < f.chunks.length; i += 16) {
-          vecs.push(...await embed(f.chunks.slice(i, i + 16).map(c => c.embed)));
-          A.idx.current.done = vecs.length; A.idx.run.chunks += Math.min(16, f.chunks.length - i);
+        for (let i = 0; i < f.chunks.length;) {
+          const n = embBatch();
+          vecs.push(...await embed(f.chunks.slice(i, i + n).map(c => c.embed)));
+          A.idx.run.chunks += Math.min(n, f.chunks.length - i); i += n;
+          A.idx.current.done = vecs.length;
           if (f.chunks.length > 32) setIdxNote();
         }
         await api('/api/index/upsert', { model: EMB_MODEL, path: f.path, mtime: f.mtime, error: f.error || null, chunks: f.chunks.map((c, i) => ({ heading: c.heading, text: c.text, vector: vecs[i] })) });
@@ -4515,6 +4528,10 @@ function idxEta() {  // "about 3 min left", from this run's pace
   const per = (Date.now() - r.start) / r.files, ms = per * left;
   return ms < 60000 ? 'less than a minute left' : `about ${Math.round(ms / 60000)} min left`;
 }
+function idxRate() {  // "120 chunks/s on the GPU"
+  const r = A.idx.run, sec = r ? (Date.now() - r.start) / 1000 : 0;
+  return r && r.chunks > 30 && sec > 2 ? `${Math.round(r.chunks / sec)} chunks/s on the ${embDeviceLabel()}` : embDeviceLabel() ? `embedding on the ${embDeviceLabel()}` : '';
+}
 function paintIdxChip() {
   const el = document.getElementById('idx-chip'), i = A.idx;
   if (!el) return;
@@ -4531,7 +4548,8 @@ async function loadIndexFiles(force) {
   if (!IX.el || !IX.el.isConnected || IX.loading || (!force && Date.now() - IX.at < 3000)) return;
   if (!A.settings || !A.settings.semanticAvailable || !state.settings.vaultPath) return drawIndexCard();
   IX.loading = true;
-  try { IX.data = await api('/api/index/files?model=' + encodeURIComponent(EMB_MODEL)); } catch (e) { IX.data = { error: e.message }; }
+  const qs = new URLSearchParams({ model: EMB_MODEL, filter: IX.filter, q: IX.q.trim(), limit: 300 });
+  try { IX.data = await api('/api/index/files?' + qs); } catch (e) { IX.data = { error: e.message }; }
   IX.loading = false; IX.at = Date.now();
   drawIndexCard();
 }
@@ -4542,7 +4560,7 @@ function paintIndexProgress() {
     : !s.semantic ? 'Meaning search is turned off below, so nothing is being embedded.'
     : i.error ? `⚠ ${i.error}`
     : i.running ? [h('b', {}, `Indexing ${i.indexed} of ${i.total} files`), Emb.progress ? ` · ${Emb.progress}` : '', i.current ? [' · now ', h('span', { class: 'ix-cur', title: i.current.path }, baseName(i.current.path)),
-        i.current.total > 16 ? ` (${i.current.done}/${i.current.total} chunks)` : ''] : '', idxEta() ? ` · ${idxEta()}` : '']
+        i.current.total > 16 ? ` (${i.current.done}/${i.current.total} chunks)` : ''] : '', idxEta() ? ` · ${idxEta()}` : '', idxRate() ? ` · ${idxRate()}` : '']
     : left ? `${left} file${left > 1 ? 's' : ''} waiting${i.settling ? ` (${i.settling} still being written – they're picked up once they stop changing for 30 s)` : ''}. Indexing runs in this browser tab while Keystone is open.`
     : i.total ? [h('b', {}, '✓ Up to date'), ` · all ${i.total} files are searchable by meaning`] : 'Nothing to index yet.';
   IX.prog.replaceChildren(h('div', { class: 'ix-bar' }, h('i', { style: `width:${pct}%` })), h('div', { class: 'ix-line' }, ...[line].flat(3).filter(x => x !== '')));
@@ -4568,28 +4586,54 @@ function drawIndexCard() {
   if (!s.semanticAvailable) return IX.el.replaceChildren(head, IX.prog);
   const waiting = (c.waiting || 0) + (c.changed || 0);
   const filters = [['all', 'All', d.total || 0], ['indexed', 'Indexed', c.indexed || 0], ['waiting', 'Waiting', waiting], ['error', "Couldn't read", c.error || 0]];
-  const seg = h('div', { class: 'seg' }, filters.map(([k, l, n]) => h('button', { class: IX.filter === k ? 'on' : '', onclick: () => { IX.filter = k; drawIndexCard(); } }, `${l} `, h('span', { class: 'ix-n' }, n))));
-  const search = h('input', { type: 'search', placeholder: 'Filter by name, folder or type…', value: IX.q, style: 'max-width:260px', oninput: e => { IX.q = e.target.value; drawRows(); } });
+  if (c.skipped) filters.push(['skipped', 'Not text', c.skipped]);
+  const seg = h('div', { class: 'seg' }, filters.map(([k, l, n]) => h('button', { class: IX.filter === k ? 'on' : '', onclick: () => { IX.filter = k; drawIndexCard(); loadIndexFiles(true); } }, `${l} `, h('span', { class: 'ix-n' }, n))));
+  const search = h('input', { type: 'search', placeholder: 'Filter by name, folder or type…', value: IX.q, style: 'max-width:260px',
+    oninput: e => { IX.q = e.target.value; drawRows(); clearTimeout(IX.qt); IX.qt = setTimeout(() => loadIndexFiles(true), 300); } });
+  const sk = d.skipped || {}, left = [sk.excluded && `${sk.excluded} in skipped folders`, sk.large && `${sk.large} over ${s.maxFileMB || 100} MB`, sk.cloud && `${sk.cloud} online-only (not downloaded)`].filter(Boolean);
   const body = h('tbody');
   const ago = t => { if (!t) return '–'; const m = Math.round((Date.now() / 1000 - t) / 60); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : fmtMoment(new Date(t * 1000), 'MMM D'); };
   const chip = f => {
     if (A.idx.current && A.idx.current.path === f.path) return h('span', { class: 'status', style: 'margin:0;background:var(--accent-soft);color:var(--accent)' }, 'Indexing…');
     return { indexed: h('span', { class: 'status ok', style: 'margin:0' }, '✓ Indexed'), waiting: h('span', { class: 'chip muted' }, 'Waiting'),
-      changed: h('span', { class: 'status warn', style: 'margin:0' }, 'Changed'), error: h('span', { class: 'status bad', style: 'margin:0', title: f.error }, "Couldn't read") }[f.state];
+      changed: h('span', { class: 'status warn', style: 'margin:0' }, 'Changed'), error: h('span', { class: 'status bad', style: 'margin:0', title: f.error }, "Couldn't read"),
+      skipped: h('span', { class: 'chip muted', title: f.error }, 'Not text') }[f.state];
   };
   const drawRows = () => {
     const q = IX.q.trim().toLowerCase();
-    const rows = (d.files || []).filter(f => (IX.filter === 'all' || f.state === IX.filter || (IX.filter === 'waiting' && f.state === 'changed'))
+    const rows = (d.files || []).filter(f => (IX.filter === 'all' ? f.state !== 'skipped' : f.state === IX.filter || (IX.filter === 'waiting' && f.state === 'changed'))
       && (!q || f.path.toLowerCase().includes(q) || f.kind.toLowerCase().includes(q)));
+    const more = Math.max(0, (d.matched || 0) - rows.length);
     body.replaceChildren(...rows.slice(0, 400).map(f => h('tr', { class: 'pick-row', title: f.error ? `${f.path}\n${f.error}` : f.path, onclick: () => { view.tab = 'notes'; render(); if (!N.tree) loadTree().then(() => openNote(f.path)); else openNote(f.path); } },
       h('td', { class: 'ix-path' }, h('span', { class: 'ix-dir' }, dirOf(f.path) ? dirOf(f.path) + '/' : ''), baseName(f.path)),
       h('td', {}, f.kind), h('td', { class: 'c num' }, f.size ? fmtSize(f.size) : '–'), h('td', {}, chip(f)),
-      h('td', { class: 'c num' }, f.chunks || '–'), h('td', {}, f.state === 'error' ? h('span', { class: 'hint', style: 'margin:0' }, f.error) : ago(f.at)))),
-      rows.length > 400 ? h('tr', {}, h('td', { colspan: 6, class: 'empty' }, `Showing 400 of ${rows.length} – filter to narrow it down`)) : '',
+      h('td', { class: 'c num' }, f.chunks || '–'), h('td', {}, ['error', 'skipped'].includes(f.state) ? h('span', { class: 'hint', style: 'margin:0' }, f.error) : ago(f.at)))),
+      more ? h('tr', {}, h('td', { colspan: 6, class: 'empty' }, `Showing ${rows.length} of ${d.matched.toLocaleString()} – search or filter to narrow it down`)) : '',
       !rows.length ? h('tr', {}, h('td', { colspan: 6, class: 'empty' }, IX.loading ? 'Loading…' : d.error ? '⚠ ' + d.error : 'No files here.')) : '');
   };
   drawRows();
+  const opt = (k, v) => saveAI({ [k]: v }).then(() => { IX.data = null; refreshIndexStatus(); loadIndexFiles(true); indexSoon(1000); drawIndexCard(); });
+  const exclude = h('textarea', { rows: 3, placeholder: 'Archive\nProjects/*/Raw results\n*.bak', style: 'font:12.5px ui-monospace,monospace' });
+  exclude.value = (s.indexExclude || []).join('\n');
+  const settingsBox = h('details', { class: 'ix-settings', open: IX.settingsOpen ? '' : false, ontoggle: e => { IX.settingsOpen = e.target.open; } },
+    h('summary', {}, 'What to index and how'),
+    h('div', { class: 'ix-grid' },
+      h('div', {}, h('label', {}, 'Skip these folders'), exclude,
+        h('small', {}, 'One per line: a folder (Archive), a pattern (Projects/*/Raw results) or a file pattern (*.bak). Skipped files are removed from the index.'),
+        h('div', {}, h('button', { class: 'btn', style: 'margin-top:6px', onclick: () => opt('indexExclude', exclude.value) }, 'Save'))),
+      h('div', {},
+        h('label', {}, 'Embedding runs on'),
+        (() => { const sel = h('select', { onchange: e => { opt('embedDevice', e.target.value); if (Emb.worker) { Emb.worker.terminate(); Emb.worker = null; Emb.device = ''; } } },
+          h('option', { value: 'auto' }, 'GPU when available, else CPU'), h('option', { value: 'cpu' }, 'CPU only')); sel.value = s.embedDevice || 'auto'; return sel; })(),
+        h('small', {}, Emb.device ? `Now: ${embDeviceLabel()}${Emb.note ? ' · ' + Emb.note : ''}.` : 'Shown once the model has loaded.', ' The GPU (WebGPU in Edge or Chrome) is usually 5–20× faster on a big vault.'),
+        h('label', { style: 'margin-top:10px' }, 'Largest file to index (MB)'),
+        h('input', { type: 'number', min: 1, max: 4096, value: s.maxFileMB || 100, style: 'width:110px', onchange: e => opt('maxFileMB', Number(e.target.value)) }),
+        h('label', { class: 'sw', style: 'margin-top:10px' }, h('input', { type: 'checkbox', checked: s.includeCloud ? '' : false, onchange: e => opt('includeCloud', e.target.checked) }),
+          'Include online-only files (OneDrive / Dropbox)'),
+        h('small', {}, 'Off: files that are only in the cloud are skipped, because reading them would download them.'))));
   IX.el.replaceChildren(head, IX.prog,
+    left.length ? h('p', { class: 'hint', style: 'margin:-4px 0 10px' }, `Not indexed: ${left.join(' · ')}.`) : '',
+    settingsBox,
     h('div', { class: 'ix-tools' }, seg, search, d.chunks ? h('span', { class: 'hint', style: 'margin:0 0 0 auto' }, `${d.chunks.toLocaleString()} chunks stored`) : null),
     h('div', { class: 'tablewrap ix-table' }, h('table', { class: 'rep' },
       h('thead', {}, h('tr', {}, h('th', {}, 'File'), h('th', {}, 'Type'), h('th', { class: 'c' }, 'Size'), h('th', {}, 'Status'), h('th', { class: 'c' }, 'Chunks'), h('th', {}, 'Indexed'))), body)));

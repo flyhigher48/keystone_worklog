@@ -46,6 +46,7 @@ IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 NO_LAUNCH = {".py", ".pyw", ".sh", ".bash", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse", ".wsf", ".com", ".exe", ".msi", ".jar", ".scr",
              ".pl", ".rb", ".command", ".app", ".desktop", ".lnk", ".url", ".reg", ".hta", ".cpl", ".ipynb"}
 OFFLINE = os.environ.get("KEYSTONE_OFFLINE", "").lower() in ("1", "true", "yes")  # never download anything
+SLOW_REQUEST = float(os.environ.get("KEYSTONE_SLOW_LOG") or 2.0)  # log requests slower than this (seconds) to the console
 MAX_UPLOAD = 25 * 1024 * 1024
 LOCK = threading.Lock()
 
@@ -57,6 +58,21 @@ def local_only():
     # the app can read and write files in your vault, so only answer this machine
     if (request.host or "").rsplit(":", 1)[0] not in ("127.0.0.1", "localhost"):
         abort(403, "Keystone only accepts requests from this computer.")
+    request.started = time.monotonic()
+
+
+@app.after_request
+def isolate_and_time(r):
+    # cross-origin isolation lets the in-browser embedding model use several CPU threads (everything is served from here)
+    r.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    r.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+    r.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    if request.method != "GET" and r.status_code < 400 and request.path.startswith(("/api/notes", "/api/files", "/api/assistant/tool", "/api/assistant/undo")):
+        documents.invalidate()  # a file was written, moved or removed: rescan on the next look
+    took = time.monotonic() - getattr(request, "started", time.monotonic())
+    if took > SLOW_REQUEST:
+        print(f"[keystone] slow request: {request.method} {request.path} took {took:.1f} s", flush=True)
+    return r
 
 
 @app.errorhandler(HTTPException)
@@ -223,31 +239,60 @@ def mtime(p):
 
 @app.get("/api/notes/tree")
 def notes_tree():
+    """Every folder, note, image and document – decided by name and directory metadata only, never by opening
+    a file (that is what made big vaults slow, and it would download OneDrive "online-only" files)."""
     root = vault_root()
-    items = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(n for n in dirnames if not n.startswith("."))
-        rel = Path(dirpath).relative_to(root)
-        if rel != Path("."):
-            items.append({"path": rel.as_posix(), "type": "dir"})
-        for f in sorted(filenames):
-            ext = Path(f).suffix.lower()
-            if f.startswith((".", "~$")) or (ext != ".md" and ext not in IMAGE_TYPES and not documents.listable(Path(dirpath) / f)):
+    known = INDEX.known_files(root) if INDEX else {}  # files of unknown type are listed once indexing confirmed they're text
+    items, stack = [], [(root, Path("."))]
+    while stack and len(items) <= 20000:
+        d, rel = stack.pop()
+        try:
+            entries = sorted(os.scandir(d), key=lambda e: e.name.lower())
+        except OSError:
+            continue
+        dirs = []
+        for e in entries:
+            name = e.name
+            if name.startswith((".", "~$")):
                 continue
-            item = {"path": (rel / f).as_posix(), "type": "note" if ext == ".md" else "image" if ext in IMAGE_TYPES else "doc"}
-            if ext == ".md" or item["type"] == "doc":
+            try:
+                is_dir = e.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            if is_dir:
+                if name not in documents.SKIP_DIRS:
+                    dirs.append((Path(e.path), rel / name))
+                continue
+            ext = Path(name).suffix.lower()
+            path = (rel / name).as_posix()
+            if ext == ".md":
+                kind = "note"
+            elif ext in IMAGE_TYPES:
+                kind = "image"
+            elif ext in documents.TYPES or ext in documents.TEXT_TYPES or ext in documents.LEGACY or ext == ".msg":
+                kind = "doc"
+            elif documents.candidate_kind(name) and not (known.get(path) or {}).get("skip") and path in known:
+                kind = "doc"
+            else:
+                continue
+            item = {"path": path, "type": kind}
+            if kind != "image":
                 try:
-                    st = (Path(dirpath) / f).stat()
+                    st = e.stat()  # from the directory listing on Windows
                     item["mtime"] = int(st.st_mtime)
-                    if item["type"] == "doc":
-                        item["size"], item["kind"] = st.st_size, documents.kind(f)
+                    if kind == "doc":
+                        item["size"], item["kind"] = st.st_size, documents.kind(name)
+                        if documents.is_cloud_only(st):
+                            item["cloud"] = True
                         if ext in NO_LAUNCH:
                             item["script"] = True
                 except OSError:
                     pass
             items.append(item)
-        if len(items) > 20000:
-            break
+        for full, r in reversed(dirs):
+            items.append({"path": r.as_posix(), "type": "dir"})
+            stack.append((full, r))
+    items.sort(key=lambda i: i["path"].lower())
     return jsonify(root=str(root), name=root.name, items=items)
 
 
@@ -726,15 +771,15 @@ def ai_chat_file(cid):
 # semantic index (vectors come from the browser's embedding model)
 def docs_on():
     s = llm_settings()
-    documents.ALL_TEXT = bool(s.get("plainText", True))  # "other plain-text files" (Settings → AI assistant)
+    documents.configure(s.get("plainText", True), s.get("indexExclude") or [], s.get("maxFileMB") or 100, s.get("includeCloud", False))
     return bool(s.get("documents", True))
 
 
 @app.get("/api/index/status")
 def index_status():
-    if docs_on():
+    if docs_on() and INDEX is None:
         try:
-            TEXTS.warm(vault_root())  # extract document text in the background, so keyword search covers documents early
+            TEXTS.warm(vault_root())  # no meaning index: extract document text in the background so keyword search covers documents
         except HTTPException:
             pass
     if INDEX is None:
@@ -747,7 +792,8 @@ def index_files():
     """Per-file indexing status for Settings → Search index."""
     if INDEX is None:
         return jsonify(available=False, files=[], counts={}, total=0)
-    return jsonify(available=True, **INDEX.file_list(vault_root(), request.args.get("model", ""), docs_on()))
+    a = request.args
+    return jsonify(available=True, **INDEX.file_list(vault_root(), a.get("model", ""), docs_on(), a.get("filter") or "all", a.get("q") or "", int(a.get("limit") or 300)))
 
 
 @app.post("/api/index/next")

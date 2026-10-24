@@ -310,6 +310,7 @@ Notes and documents are split into chunks (by heading, page, slide, sheet, funct
 
 - **Staying current:** the index updates as you go. Files you save, files the assistant changes and files edited elsewhere are re-embedded within a few seconds while the app is open. Only changed files are processed, each at most once per pass; a file that keeps changing (a solver job that is still running, a log) waits until it has been quiet for 30 seconds.
 - **Memory:** the model uses roughly 100 MB while it works and is unloaded after 5 idle minutes.
+- **GPU or CPU:** with a GPU, Edge and Chrome (and recent Firefox) run the model through WebGPU, usually 5–20× faster on a big vault; otherwise it runs on the CPU with several threads. Choose *CPU only* in **Settings → Search index → What to index and how** if the GPU misbehaves. The GPU uses the full-precision model file (about 90 MB, downloaded or bundled once).
 - **Offline:** the model and its runtime are downloaded once, through the app, into `data/models/`, and served locally after that.
 - **Turn it off,** or rebuild the index, in Settings.
 
@@ -348,9 +349,22 @@ Drop new files into the vault's **Inbox** folder (change its name in **Settings 
 - **Moving:** nothing moves until you click **Move**. Files are never overwritten or deleted, the whole batch can be undone in one click, and with git turned on the move is committed – only for files git already tracked, so moving a large `.odb` or PDF never adds it to the repository.
 - **With the assistant:** **Ask Keystone instead** (or *“file my inbox”*) lets the model use `vault_map` (folders, counts, examples and folder descriptions from a folder note or README), `suggest_folder` and `read_document` to decide, and propose everything in one `move_files` table that you can edit before applying. If you change its plan, it offers to record the lesson in a **Filing rules** note, which it reads next time.
 
+### Big vaults and OneDrive
+
+Keystone is built to stay responsive on a vault of thousands of files:
+
+- **Listing never opens files.** The Notes tree and the index status are worked out from names and folder listings only (on Windows the file sizes and dates come with the folder listing). Whether a file of unknown type is really text is checked once, when it is indexed; binary files are then marked *Not text* and left alone.
+- **OneDrive / Dropbox "online-only" files are skipped** unless you tick *Include online-only files* – reading them would download them. Use *Always keep on this device* on the vault folder if you want everything indexed.
+- **Skip folders** you don't need searched (archives, raw results) and set the **largest file to index** (100 MB by default) in **Settings → Search index → What to index and how**. Skipped files are removed from the index.
+- **Documents are read in a separate process,** so a big PDF never freezes the app, and a file that takes more than 3 minutes is given up on. PDFs are read up to 500 pages, and huge solver files are scanned for errors and warnings up to 256 MB.
+- **The vault scan is reused for 15 seconds** and refreshed straight away after you save or move files in Keystone.
+- **Slow requests are logged** to the console (`[keystone] slow request: …`), so you can see where time goes; set `KEYSTONE_SLOW_LOG=0.5` to log more.
+
+The first index of a large vault still takes a while – notes go first, then documents, newest first – and runs only while Keystone is open in a browser tab.
+
 ### Search index status
 
-**Settings → Search index** shows what the assistant can search: a progress bar, the file being read right now and about how long is left, and a table of every file – **Indexed** (with its number of chunks and when), **Waiting**, **Changed** (re-indexing), or **Couldn't read** (with the reason). Filter it by status or name, start a pass with **Index now**, or **Rebuild** from scratch. While indexing runs, a **Indexing 43%** chip in the top bar shows progress on every page; click it for the details. Indexing happens in the browser tab, so it only runs while Keystone is open.
+**Settings → Search index** shows what the assistant can search: a progress bar, the file being read right now, the speed and whether it runs on the GPU or CPU, about how long is left, and a table of every file – **Indexed** (with its number of chunks and when), **Waiting**, **Changed** (re-indexing), or **Couldn't read** (with the reason). Filter it by status or name, start a pass with **Index now**, or **Rebuild** from scratch. While indexing runs, a **Indexing 43%** chip in the top bar shows progress on every page; click it for the details. Indexing happens in the browser tab, so it only runs while Keystone is open.
 
 ### Offline / air-gapped
 

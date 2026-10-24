@@ -32,7 +32,8 @@ EMBED_SOURCES = {"hf": "https://huggingface.co/", "cdn": "https://cdn.jsdelivr.n
 _MODEL = "Xenova/all-MiniLM-L6-v2/resolve/main/"
 _RUNTIME = "npm/@huggingface/transformers@3.0.2/dist/"
 EMBED_FILES = {
-    "hf": [_MODEL + f for f in ("config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "onnx/model_quantized.onnx")],
+    # model_quantized.onnx runs on the CPU; model.onnx (full precision) runs on the GPU through WebGPU
+    "hf": [_MODEL + f for f in ("config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "onnx/model_quantized.onnx", "onnx/model.onnx")],
     "cdn": [_RUNTIME + f for f in ("transformers.min.js", "ort-wasm-simd-threaded.jsep.wasm")],
 }
 TABLE = "chunks"
@@ -44,25 +45,16 @@ BATCH_CHUNKS = 300      # roughly how many chunks one /api/index/next hands to t
 
 
 def vault_notes(root):
-    """{relative path: mtime_ns} for every visible .md note in the vault."""
-    out = {}
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-        for f in filenames:
-            if f.endswith(".md") and not f.startswith("."):
-                p = Path(dirpath) / f
-                try:
-                    out[p.relative_to(root).as_posix()] = p.stat().st_mtime_ns
-                except OSError:
-                    pass
-    return out
+    """{relative path: mtime_ns} for every visible .md note in the vault (from the shared, cached scan)."""
+    return dict(documents.scan(root)["notes"])
 
 
 def vault_files(root, docs=False):
     """Notes, plus documents when `docs` is on: {relative path: mtime_ns}."""
-    out = vault_notes(root)
+    sc = documents.scan(root)
+    out = dict(sc["notes"])
     if docs:
-        out.update(documents.vault_documents(root))
+        out.update(sc["docs"])
     return out
 
 
@@ -198,40 +190,57 @@ class VectorIndex:
                 st["files"].pop(p, None)
             self._save_state(st)
             self.texts.prune(root, [p for p in cur if not p.endswith(".md")])
-        stale = [p for p, m in cur.items() if st["files"].get(p, {}).get("mtime") != m]
+        stale = [p for p, m in cur.items() if st["files"].get(p, {}).get("mtime") != m]  # (files found not to be text keep a "skip" entry)
         stale.sort(key=lambda p: (not p.endswith(".md"), -cur[p]))  # notes are quick: do them first
         return st, cur, stale
+
+    @staticmethod
+    def _skipped(st, cur):
+        return {p for p, f in st["files"].items() if f.get("skip") and p in cur and f.get("mtime") == cur[p]}
 
     def status(self, root, model, docs=False):
         with self.lock:
             st, cur, stale = self._sync(root, model, docs)
-            n_docs = sum(1 for p in cur if not p.endswith(".md"))
+            skipped = self._skipped(st, cur)
+            n_docs = sum(1 for p in cur if not p.endswith(".md") and p not in skipped)
             errors = {p: f["error"] for p, f in st["files"].items() if f.get("error") and p in cur}
-            return {"available": True, "total": len(cur), "indexed": len(cur) - len(stale), "stale": len(stale),
-                    "documents": n_docs, "notes": len(cur) - n_docs, "errors": len(errors),
-                    "errorFiles": dict(list(errors.items())[:20]), "missing": documents.missing() if docs else {}}
+            total = len(cur) - len(skipped)
+            sc = documents.scan(root)
+            return {"available": True, "total": total, "indexed": total - len(stale), "stale": len(stale),
+                    "documents": n_docs, "notes": total - n_docs, "errors": len(errors), "notText": len(skipped),
+                    "errorFiles": dict(list(errors.items())[:20]), "missing": documents.missing() if docs else {},
+                    "skipped": sc["skipped"], "scanSeconds": sc["seconds"]}
 
-    def file_list(self, root, model, docs=False):
-        """Every file the index covers and where it stands: indexed (chunks, when), waiting, changed, or unreadable."""
+    def file_list(self, root, model, docs=False, filter="all", q="", limit=300):
+        """Where each file stands – indexed (chunks, when), waiting, changed, unreadable or not text – filtered and
+        searched here so a vault with thousands of files sends only one page of rows."""
         with self.lock:
             st, cur, stale = self._sync(root, model, docs)
+        sizes = documents.scan(root)["sizes"]
         stale_set, rows = set(stale), []
-        for rel, m in cur.items():
+        for rel in cur:
             f = st["files"].get(rel) or {}
             if rel in stale_set:
                 state = "changed" if f else "waiting"
             else:
-                state = "error" if f.get("error") else "indexed"
-            try:
-                size = (Path(root) / rel).stat().st_size
-            except OSError:
-                size = 0
-            rows.append({"path": rel, "kind": "Note" if rel.endswith(".md") else documents.kind(rel), "size": size, "state": state,
-                         "chunks": 0 if rel in stale_set else f.get("n", 0), "at": f.get("at"), "error": f.get("error", "")})
-        order = {"changed": 0, "waiting": 1, "error": 2, "indexed": 3}
-        rows.sort(key=lambda r: (order[r["state"]], r["path"].lower()))
-        counts = {k: sum(1 for r in rows if r["state"] == k) for k in order}
-        return {"files": rows, "counts": counts, "total": len(rows), "chunks": sum(r["chunks"] for r in rows)}
+                state = "skipped" if f.get("skip") else "error" if f.get("error") else "indexed"
+            rows.append((state, rel, f))
+        order = {"changed": 0, "waiting": 1, "error": 2, "indexed": 3, "skipped": 4}
+        counts = {k: sum(1 for r in rows if r[0] == k) for k in order}
+        want = {"all": ("changed", "waiting", "error", "indexed"), "waiting": ("changed", "waiting")}.get(filter, (filter,))
+        ql = (q or "").strip().lower()
+        hits = [r for r in rows if r[0] in want and (not ql or ql in r[1].lower() or ql in documents.kind(r[1]).lower())]
+        hits.sort(key=lambda r: (order[r[0]], r[1].lower()))
+        out = [{"path": rel, "kind": "Note" if rel.endswith(".md") else documents.kind(rel), "size": sizes.get(rel, 0), "state": state,
+                "chunks": 0 if state in ("changed", "waiting", "skipped") else f.get("n", 0), "at": f.get("at"), "error": f.get("error") or f.get("skip") or ""}
+               for state, rel, f in hits[:max(1, min(2000, int(limit or 300)))]]
+        return {"files": out, "matched": len(hits), "counts": counts, "total": len(rows) - counts["skipped"],
+                "chunks": sum(f.get("n", 0) for state, _, f in rows if state == "indexed"), "skipped": documents.scan(root)["skipped"]}
+
+    def known_files(self, root):
+        """{path: state entry} for files the index has seen (for listing files of unknown type without opening them)."""
+        st = self._state()
+        return st.get("files", {}) if st.get("root") == str(root) else {}
 
     def chunks_for(self, root, rel, mtime=None):
         """(chunks, error) for one note or document, ready for the browser to embed."""
@@ -251,17 +260,28 @@ class VectorIndex:
         skip, fresh = set(skip or ()), (time.time() - settle) * 1e9 if settle else None
         # only files that were indexed before and are changing again wait (a running solver job, a log); new files go straight in
         todo = [p for p in stale if p not in skip and not (fresh and cur[p] > fresh and p in st["files"])]
-        files, n = [], 0
-        for rel in todo[: max(limit, 1) * 4]:
+        files, n, not_text = [], 0, []
+        for rel in todo[: max(limit, 1) * 8]:
             if len(files) >= limit or (files and n >= BATCH_CHUNKS):
                 break
+            if not rel.endswith(".md") and documents.needs_text_check(rel) and not documents.looks_like_text(Path(root) / rel, cur[rel]):
+                not_text.append(rel)  # judged by its name it could be text, but it's binary: remember, and don't count it
+                continue
             try:
                 chunks, err = self.chunks_for(root, rel, cur[rel])
             except OSError:
                 continue
             files.append({"path": rel, "mtime": str(cur[rel]), "chunks": chunks, "error": err})  # str: ns timestamps exceed JS number precision
             n += len(chunks)
-        return {"files": files, "remaining": len(stale), "total": len(cur), "settling": len(stale) - len(todo)}
+        if not_text:
+            with self.lock:
+                st = self._checked_state(root, model)
+                for rel in not_text:
+                    st["files"][rel] = {"mtime": cur[rel], "n": 0, "skip": "not a text file"}
+                self._save_state(st)
+        skipped = len(self._skipped(st, cur)) if not not_text else len(self._skipped(self._state(), cur))
+        remaining = len(stale) - len(not_text)
+        return {"files": files, "remaining": remaining, "total": len(cur) - skipped, "settling": len(stale) - len(todo), "notText": len(not_text)}
 
     def upsert(self, root, model, path, mtime, chunks, error=None):
         with self.lock:

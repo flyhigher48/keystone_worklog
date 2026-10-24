@@ -38,7 +38,8 @@ class LLMError(Exception):
 
 
 # ---------- settings (data/llm.json, never sent to the browser with keys) ----------
-DEFAULTS = {"profiles": [], "active": None, "autoApply": False, "gitCommit": True, "semantic": True, "documents": True, "plainText": True, "maxSteps": 12}
+DEFAULTS = {"profiles": [], "active": None, "autoApply": False, "gitCommit": True, "semantic": True, "documents": True, "plainText": True, "maxSteps": 12,
+            "indexExclude": [], "maxFileMB": 100, "includeCloud": False, "embedDevice": "auto"}
 PROFILE_KEYS = ("id", "name", "baseUrl", "apiKey", "model", "trackerAccess", "stream", "temperature")
 
 
@@ -76,6 +77,16 @@ def merge_settings(s, incoming):
     for k in ("autoApply", "gitCommit", "semantic", "documents", "plainText"):
         if k in incoming:
             s[k] = bool(incoming[k])
+    if "includeCloud" in incoming:
+        s["includeCloud"] = bool(incoming["includeCloud"])
+    if "indexExclude" in incoming:
+        raw = incoming["indexExclude"]
+        items = raw.splitlines() if isinstance(raw, str) else raw if isinstance(raw, list) else []
+        s["indexExclude"] = [str(x).strip().strip("/").replace("\\", "/") for x in items if str(x).strip().strip("/")][:200]
+    if "maxFileMB" in incoming:
+        s["maxFileMB"] = max(1, min(4096, float(incoming.get("maxFileMB") or 100)))
+    if incoming.get("embedDevice") in ("auto", "cpu"):
+        s["embedDevice"] = incoming["embedDevice"]
     if "maxSteps" in incoming:
         s["maxSteps"] = max(1, min(40, int(incoming.get("maxSteps") or 12)))
     if "profiles" in incoming:

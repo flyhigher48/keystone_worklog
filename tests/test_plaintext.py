@@ -71,10 +71,11 @@ class PlainTextTest(unittest.TestCase):
         self.put("Jobs/girder.dat", b"\x00\x01\x02binary results" * 50)
         self.put("Mail/outlook.msg", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 600)
         self.put("Jobs/girder.odb", b"text-looking but an odb")
-        found = docs.vault_documents(self.v)
-        self.assertNotIn("Jobs/girder.dat", found)
-        self.assertNotIn("Jobs/girder.odb", found)
-        self.assertNotIn("Mail/outlook.msg", found)
+        found = docs.vault_documents(self.v)  # the scan never opens files: binary files with text names are candidates…
+        self.assertNotIn("Jobs/girder.odb", found)  # …except known binary types
+        self.assertIn("Jobs/girder.dat", found)
+        self.assertIsNone(docs.doc_kind(self.v / "Jobs/girder.dat"))  # …and the check before indexing rejects them
+        self.assertIsNone(docs.doc_kind(self.v / "Mail/outlook.msg"))
         self.assertTrue(docs.listable(self.v / "Mail/outlook.msg"))  # still shown in the tree, opened in Outlook
         with self.assertRaisesRegex(docs.DocError, "Outlook .msg"):
             docs.extract(self.v / "Mail/outlook.msg")
@@ -136,11 +137,11 @@ class PlainTextTest(unittest.TestCase):
         c = self.env.client
         j = c.get("/api/index/files?model=m1").get_json()
         rows = {f["path"]: f["state"] for f in j["files"]}
-        self.assertEqual((rows["Work/a.md"], rows["Jobs/girder.msg"]), ("waiting", "waiting"))
-        self.assertNotIn("Jobs/girder.dat", rows)
+        self.assertEqual((rows["Work/a.md"], rows["Jobs/girder.msg"], rows["Jobs/girder.dat"]), ("waiting", "waiting", "waiting"))
         while True:
-            files = c.post("/api/index/next", json={"model": "m1", "limit": 8}).get_json()["files"]
-            if not files:
+            j = c.post("/api/index/next", json={"model": "m1", "limit": 8}).get_json()
+            files = j["files"]
+            if not files and not j.get("notText"):
                 break
             for f in files:
                 c.post("/api/index/upsert", json={"model": "m1", "path": f["path"], "mtime": f["mtime"],
@@ -148,6 +149,12 @@ class PlainTextTest(unittest.TestCase):
         j = c.get("/api/index/files?model=m1").get_json()
         rows = {f["path"]: f for f in j["files"]}
         self.assertEqual(j["counts"]["indexed"], j["total"])
+        self.assertNotIn("Jobs/girder.dat", rows)  # found to be binary: skipped, not an error, not counted
+        self.assertEqual(j["counts"]["skipped"], 1)
+        self.assertEqual(c.get("/api/index/files?model=m1&filter=skipped").get_json()["files"][0]["error"], "not a text file")
+        self.assertEqual([f["path"] for f in c.get("/api/index/files?model=m1&q=girder.msg").get_json()["files"]], ["Jobs/girder.msg"])
+        st = c.get("/api/index/status?model=m1").get_json()
+        self.assertEqual((st["stale"], st["notText"]), (0, 1))
         self.assertGreater(rows["Jobs/girder.msg"]["chunks"], 0)
         self.assertIsInstance(rows["Work/a.md"]["at"], int)
         self.assertEqual(rows["Jobs/girder.msg"]["kind"], "Message file")

@@ -41,6 +41,7 @@ keystone-worklog
 - 📥 **An inbox that files itself.** Drop files into `Inbox/` and Keystone suggests where each one belongs, from similar files and job names already in your vault. Review the table, click **Move**, undo if needed.
 - 🤖 **An assistant that works with you.** "Log 8 hours to each project for today." "Push every card without a date to next Friday." "Summarize this note." Every change shows up as a diff to **Apply** or **Reject**, and can be undone.
 - 🔒 **Local-first and private.** Keystone runs on `127.0.0.1`. Use a local model (Ollama, LM Studio, llama.cpp) and nothing leaves your machine. API keys never reach the browser.
+- ⚡ **Fast on big vaults.** Listing never opens files, OneDrive online-only files aren't downloaded, folders can be skipped, documents are read in a separate process, and embedding runs on your GPU (WebGPU) when there is one.
 - ✈️ **Works without internet.** One command bundles Keystone, its Python packages and the embedding model for an air-gapped computer.
 
 ---
@@ -166,6 +167,7 @@ KEYSTONE_DATA_DIR=demo/data python app.py --port 5050
 | `keystone-worklog --no-browser` | Don't open a browser window |
 | `keystone-worklog --models-dir PATH` | Use an offline embedding-model bundle (see below) |
 | `keystone-worklog --offline` | Never connect to the internet (or set `KEYSTONE_OFFLINE=1`) |
+| `KEYSTONE_SLOW_LOG=0.5` | Log requests slower than this many seconds to the console (default 2) |
 | `KEYSTONE_DATA_DIR=PATH` | Keep the data in another folder, e.g. a second profile |
 
 **Where your data lives:**

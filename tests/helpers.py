@@ -21,6 +21,8 @@ class Env:
         self.data.mkdir()
         (self.vault / ".obsidian").mkdir(parents=True)
         os.environ["KEYSTONE_DATA_DIR"] = str(self.data)
+        from keystone_worklog import documents
+        documents.SCAN_TTL = 0  # tests write files straight to disk: never reuse a scan
         from keystone_worklog import app as app_module  # reloaded so module-level paths pick up KEYSTONE_DATA_DIR
         self.app = importlib.reload(app_module)
         self.client = self.app.app.test_client()

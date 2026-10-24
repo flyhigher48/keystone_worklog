@@ -16,8 +16,13 @@ import html
 import io
 import json
 import os
+import fnmatch
+import multiprocessing
 import re
 import threading
+import time
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FutureTimeout
+from concurrent.futures.process import BrokenProcessPool
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -72,7 +77,8 @@ SMALL_TEXT = 1_500_000            # plain-text files up to this size are read wh
 SMALL_LOG = 500_000
 HEAD, TAIL = 200_000, 100_000     # …bigger ones: the start, the end, and a scan of the whole file for errors and warnings
 LOG_HEAD, LOG_TAIL = 60_000, 40_000  # solver output and logs are mostly numbers: keep less of them
-SCAN_LIMIT = 4 * 1024 ** 3        # stop scanning a giant output file after 4 GB
+SCAN_LIMIT = 256 * 1024 ** 2      # stop scanning a giant output file for errors after 256 MB
+MAX_PDF_PAGES = 500               # pages read per PDF
 VERSION = 3                       # bump to re-extract everything after an extractor change
 
 
@@ -274,6 +280,9 @@ def _pdf(data, name):
         raise DocError(f"not a readable PDF ({e})") from None
     out = []
     for i, page in enumerate(r.pages, 1):
+        if i > MAX_PDF_PAGES:
+            out.append({"heading": f"Pages {i}–{len(r.pages)}", "text": f"(not read: only the first {MAX_PDF_PAGES} pages of a PDF are searched)"})
+            break
         try:
             t = page.extract_text() or ""
         except Exception:
@@ -629,22 +638,164 @@ def extract(path):
 
 
 # ---------- files in the vault + the text cache ----------
-def vault_documents(root):
-    """{relative path: mtime_ns} for every visible file Keystone can read (notes excluded)."""
-    out = {}
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in ("__pycache__", "node_modules", ".ipynb_checkpoints")]
-        for f in filenames:
-            if f.startswith((".", "~$")) or f.lower().endswith(".md"):
-                continue
-            p = Path(dirpath) / f
-            try:
-                m = p.stat().st_mtime_ns
-            except OSError:
-                continue
-            if doc_kind(p, m):
-                out[p.relative_to(root).as_posix()] = m
+# ---------- scanning the vault: fast, and never opens a file ----------
+# Opening a file is what's slow (and on OneDrive / Dropbox "online-only" files, it downloads the file), so the
+# scan decides by name and directory metadata only; whether an unknown file is really text is checked once, when it's indexed.
+EXCLUDE = []                     # folders or patterns to skip (Settings → Search index), e.g. "Archive", "*/raw results"
+MAX_FILE_MB = 100                # bigger files are not indexed
+INCLUDE_CLOUD = False            # index files that are only in the cloud (opening them downloads them)
+SKIP_DIRS = {"__pycache__", "node_modules", ".ipynb_checkpoints"}
+CLOUD_ATTRS = 0x400000 | 0x40000 | 0x1000  # Windows: RECALL_ON_DATA_ACCESS | RECALL_ON_OPEN | OFFLINE ("online-only")
+SCAN_TTL = 15                    # seconds a scan is reused
+_scans, _scan_lock = {}, threading.Lock()
+
+
+def configure(all_text=True, exclude=(), max_mb=100, cloud=False):
+    """Apply the Settings → AI assistant / Search index options (cheap; call before scanning)."""
+    global ALL_TEXT, EXCLUDE, MAX_FILE_MB, INCLUDE_CLOUD
+    ALL_TEXT, MAX_FILE_MB, INCLUDE_CLOUD = bool(all_text), max(1, float(max_mb or 100)), bool(cloud)
+    EXCLUDE = [x.strip().strip("/").replace("\\", "/") for x in exclude or [] if x and x.strip().strip("/")]
+
+
+def invalidate():
+    with _scan_lock:
+        _scans.clear()
+
+
+def is_cloud_only(st):
+    return bool(getattr(st, "st_file_attributes", 0) & CLOUD_ATTRS)
+
+
+def candidate_kind(name):
+    """The label a file would get, judged by its name only (unknown types are confirmed as text when indexed)."""
+    if name.startswith((".", "~$")):
+        return None
+    ext = Path(name).suffix.lower()
+    if ext == ".md" or ext in BINARY_EXTS:
+        return None
+    if ext in TYPES:
+        return TYPES[ext][0] if TYPES[ext][1] else None
+    if ext in TEXT_TYPES:
+        return TEXT_TYPES[ext]
+    return "Text" if ALL_TEXT else None
+
+
+def needs_text_check(rel):
+    """Plain-text candidates (solver files, code, unknown types) – checked with looks_like_text before indexing."""
+    return Path(rel).suffix.lower() not in TYPES
+
+
+def excluded(rel):
+    low = rel.lower()
+    for pat in EXCLUDE:
+        p = pat.lower()
+        if low == p or low.startswith(p + "/") or fnmatch.fnmatch(low, p) or fnmatch.fnmatch(low, p + "/*"):
+            return True
+    return False
+
+
+def scan(root, force=False):
+    """{"notes": {rel: mtime_ns}, "docs": {rel: mtime_ns}, "sizes": {rel: bytes}, "skipped": {...}} – reused for SCAN_TTL s."""
+    key = (str(root), ALL_TEXT, tuple(EXCLUDE), MAX_FILE_MB, INCLUDE_CLOUD)
+    with _scan_lock:
+        hit = _scans.get(key)
+        if hit and not force and time.monotonic() - hit[0] < SCAN_TTL:
+            return hit[1]
+    root = Path(root)
+    out = {"notes": {}, "docs": {}, "sizes": {}, "skipped": {"cloud": 0, "large": 0, "excluded": 0}, "seconds": 0.0}
+    t0, limit, stack = time.monotonic(), MAX_FILE_MB * 1024 * 1024, [root]
+    while stack:
+        d = stack.pop()
+        try:
+            it = os.scandir(d)
+        except OSError:
+            continue
+        with it:
+            for e in it:
+                name = e.name
+                if name.startswith((".", "~$")):
+                    continue
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        if name not in SKIP_DIRS:
+                            rel = Path(e.path).relative_to(root).as_posix()
+                            if excluded(rel):
+                                out["skipped"]["excluded"] += 1
+                            else:
+                                stack.append(Path(e.path))
+                        continue
+                except OSError:
+                    continue
+                note = name.lower().endswith(".md")
+                if not note and not candidate_kind(name):
+                    continue
+                rel = Path(e.path).relative_to(root).as_posix()
+                if excluded(rel):
+                    out["skipped"]["excluded"] += 1
+                    continue
+                try:
+                    st = e.stat()  # on Windows this comes from the directory listing: no extra disk access
+                except OSError:
+                    continue
+                if is_cloud_only(st) and not INCLUDE_CLOUD:
+                    out["skipped"]["cloud"] += 1
+                    continue
+                if note:
+                    out["notes"][rel] = st.st_mtime_ns
+                elif st.st_size > limit:
+                    out["skipped"]["large"] += 1
+                else:
+                    out["docs"][rel] = st.st_mtime_ns
+                out["sizes"][rel] = st.st_size
+    out["seconds"] = round(time.monotonic() - t0, 2)
+    with _scan_lock:
+        _scans[key] = (time.monotonic(), out)
     return out
+
+
+def vault_documents(root):
+    """{relative path: mtime_ns} for every file that looks readable (notes excluded). Never opens a file."""
+    return scan(root)["docs"]
+
+
+# ---------- reading documents in a separate process ----------
+# A big or broken PDF can take a long time, and parsing holds Python's lock: in a worker process it never
+# freezes the web server, uses another CPU core, and a file that hangs is given up on after EXTRACT_TIMEOUT.
+ISOLATE = True
+EXTRACT_TIMEOUT = 180
+_pool, _pool_lock = None, threading.Lock()
+
+
+def _kill_pool():
+    global _pool
+    with _pool_lock:
+        pool, _pool = _pool, None
+    if pool is not None:
+        for proc in list(getattr(pool, "_processes", {}).values()):
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def extract_isolated(path):
+    global _pool
+    if not ISOLATE:
+        return extract(path)
+    with _pool_lock:
+        if _pool is None:
+            _pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+        pool = _pool
+    try:
+        fut = pool.submit(extract, str(path))
+        return fut.result(timeout=EXTRACT_TIMEOUT)
+    except FutureTimeout:
+        _kill_pool()
+        raise DocError(f"reading it took more than {EXTRACT_TIMEOUT // 60} minutes") from None
+    except (BrokenProcessPool, RuntimeError, OSError):  # the worker died or can't start: read it here instead
+        _kill_pool()
+        return extract(path)
 
 
 class TextCache:
@@ -676,7 +827,7 @@ class TextCache:
         if hit:
             return hit
         try:
-            sections, err = extract(p), None
+            sections, err = extract_isolated(p), None
         except DocError as e:
             sections, err = [], str(e)
         except Exception as e:  # a broken file must never stop indexing
@@ -700,7 +851,10 @@ class TextCache:
             try:
                 for rel, m in sorted(vault_documents(root).items(), key=lambda x: -x[1]):
                     if not self.cached(root, rel, m):
+                        if needs_text_check(rel) and not looks_like_text(Path(root) / rel, m):
+                            continue
                         self.get(root, rel, m)
+                        time.sleep(0.05)  # stay in the background
             except Exception:
                 pass
             finally:
