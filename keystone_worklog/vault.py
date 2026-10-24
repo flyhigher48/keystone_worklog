@@ -14,6 +14,8 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 
+from . import fsutil
+
 DEFAULT_FOLDER = "Keystone"  # tracker sub-folder in the vault (configurable in Settings)
 START = "<!-- nwa-tracker:start -->"  # marker names kept for compatibility with existing vaults
 END = "<!-- nwa-tracker:end -->"
@@ -78,10 +80,7 @@ def write_if_changed(path, text):
     old = path.read_text(encoding="utf-8") if path.exists() else None
     if old == text:
         return False
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".nwa-tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    fsutil.write_text(path, text)
     return True
 
 

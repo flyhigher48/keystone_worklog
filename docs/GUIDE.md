@@ -358,6 +358,7 @@ Keystone is built to stay responsive on a vault of thousands of files:
 - **Skip folders** you don't need searched (archives, raw results) and set the **largest file to index** (100 MB by default) in **Settings → Search index → What to index and how**. Skipped files are removed from the index.
 - **Documents are read in a separate process,** so a big PDF never freezes the app, and a file that takes more than 3 minutes is given up on. PDFs are read up to 500 pages, and huge solver files are scanned for errors and warnings up to 256 MB.
 - **The vault scan is reused for 15 seconds** and refreshed straight away after you save or move files in Keystone.
+- **The search index stays out of OneDrive.** It is a cache that changes constantly while indexing, and a syncing folder locks files mid-write (Windows reports *Access is denied*). If the data folder is inside OneDrive, Dropbox or a similar folder, the index is kept in `%LOCALAPPDATA%\keystone-worklog\` (Windows) or `~/.cache/keystone-worklog/` instead; the console shows where at start-up. Set `KEYSTONE_INDEX_DIR` to choose yourself. All of Keystone's saves also retry for a few seconds when a file is briefly locked, and an indexing pass carries on past a file it couldn't save.
 - **Slow requests are logged** to the console (`[keystone] slow request: …`), so you can see where time goes; set `KEYSTONE_SLOW_LOG=0.5` to log more.
 
 The first index of a large vault still takes a while – notes go first, then documents, newest first – and runs only while Keystone is open in a browser tab.

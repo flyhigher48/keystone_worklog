@@ -4490,7 +4490,7 @@ async function refreshIndexStatus() {
 }
 async function indexVault() {
   if (!embeddingsOn() || A.idx.running) return;
-  Object.assign(A.idx, { running: true, error: '', current: null, run: { start: Date.now(), files: 0, chunks: 0 } });
+  Object.assign(A.idx, { running: true, error: '', failed: 0, lastError: '', current: null, run: { start: Date.now(), files: 0, chunks: 0 } });
   const done = new Set();
   try {
     for (let round = 0, cap = 0; ; round++) {
@@ -4510,12 +4510,22 @@ async function indexVault() {
           A.idx.current.done = vecs.length;
           if (f.chunks.length > 32) setIdxNote();
         }
-        await api('/api/index/upsert', { model: EMB_MODEL, path: f.path, mtime: f.mtime, error: f.error || null, chunks: f.chunks.map((c, i) => ({ heading: c.heading, text: c.text, vector: vecs[i] })) });
+        const body = { model: EMB_MODEL, path: f.path, mtime: f.mtime, error: f.error || null, chunks: f.chunks.map((c, i) => ({ heading: c.heading, text: c.text, vector: vecs[i] })) };
+        let saved = false;
+        for (const wait of [0, 1000, 3000]) {  // a file briefly locked (OneDrive, antivirus) shouldn't stop the whole pass
+          if (wait) await new Promise(r => setTimeout(r, wait));
+          try { await api('/api/index/upsert', body); saved = true; break; } catch (e) { A.idx.lastError = e.message; }
+        }
+        if (!saved) { done.add(f.path); A.idx.failed = (A.idx.failed || 0) + 1; continue; }  // try it again on the next pass
         done.add(f.path); A.idx.indexed++; A.idx.run.files++; ixMark(f); setIdxNote();
       }
     }
   } catch (e) { A.idx.error = e.message; }
-  finally { A.idx.running = false; A.idx.current = null; Emb.progress = ''; setIdxNote(); loadIndexFiles(true); if (A.idx.settling) indexSoon(35000); }  // files still being written: look again soon
+  finally {
+    A.idx.running = false; A.idx.current = null; Emb.progress = ''; setIdxNote(); loadIndexFiles(true);
+    if (A.idx.error || A.idx.failed) indexSoon(30000);  // pick up where it stopped, without pressing Index now
+    else if (A.idx.settling) indexSoon(35000);  // files still being written: look again soon
+  }
 }
 let idxTimer;
 function indexSoon(ms = 4000) { clearTimeout(idxTimer); idxTimer = setTimeout(indexVault, ms); }
@@ -4558,9 +4568,10 @@ function paintIndexProgress() {
   const i = A.idx, s = A.settings || {}, pct = i.total ? Math.min(100, i.indexed / i.total * 100) : 0, left = Math.max(0, i.total - i.indexed);
   const line = !s.semanticAvailable ? 'Meaning search needs LanceDB (pip install lancedb). Keyword search still reads every file.'
     : !s.semantic ? 'Meaning search is turned off below, so nothing is being embedded.'
-    : i.error ? `⚠ ${i.error}`
+    : i.error ? `⚠ ${i.error} – trying again in 30 s`
     : i.running ? [h('b', {}, `Indexing ${i.indexed} of ${i.total} files`), Emb.progress ? ` · ${Emb.progress}` : '', i.current ? [' · now ', h('span', { class: 'ix-cur', title: i.current.path }, baseName(i.current.path)),
         i.current.total > 16 ? ` (${i.current.done}/${i.current.total} chunks)` : ''] : '', idxEta() ? ` · ${idxEta()}` : '', idxRate() ? ` · ${idxRate()}` : '']
+    : i.failed ? `${i.failed} file${i.failed > 1 ? 's' : ''} couldn't be saved (${i.lastError}) – trying again in 30 s.`
     : left ? `${left} file${left > 1 ? 's' : ''} waiting${i.settling ? ` (${i.settling} still being written – they're picked up once they stop changing for 30 s)` : ''}. Indexing runs in this browser tab while Keystone is open.`
     : i.total ? [h('b', {}, '✓ Up to date'), ` · all ${i.total} files are searchable by meaning`] : 'Nothing to index yet.';
   IX.prog.replaceChildren(h('div', { class: 'ix-bar' }, h('i', { style: `width:${pct}%` })), h('div', { class: 'ix-line' }, ...[line].flat(3).filter(x => x !== '')));

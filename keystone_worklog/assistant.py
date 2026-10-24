@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import documents, vault
+from . import documents, fsutil, vault
 
 READ_LIMIT = 20000
 # common words left out of keyword search, so "when can the crew start" matches on "crew" and "start"
@@ -52,13 +52,7 @@ def load_settings(path):
 
 
 def save_settings(path, s):
-    path = Path(path)
-    path.parent.mkdir(exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # owner-only: holds API keys
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(s, f, indent=2)
-    os.replace(tmp, path)
+    fsutil.write_text(path, json.dumps(s, indent=2), mode=0o600)  # owner-only: holds API keys
 
 
 def mask(key):
@@ -774,10 +768,7 @@ class Tools:
             record = {"kind": "move", "from": plan["path"], "to": plan["to"]}
         else:
             p = self.root / plan["path"]
-            p.parent.mkdir(parents=True, exist_ok=True)
-            tmp = p.with_name(p.name + ".nwa-tmp")
-            tmp.write_text(plan["after"], encoding="utf-8")
-            os.replace(tmp, p)
+            fsutil.write_text(p, plan["after"])
             paths, links = [plan["path"]], []
             record = {"kind": plan["kind"], "path": plan["path"], "before": plan["before"], "after": plan["after"]}
         commit = git_commit(self.root, paths, f"Assistant: {label or plan['summary']}") if self.git_on else None

@@ -167,6 +167,7 @@ KEYSTONE_DATA_DIR=demo/data python app.py --port 5050
 | `keystone-worklog --no-browser` | Don't open a browser window |
 | `keystone-worklog --models-dir PATH` | Use an offline embedding-model bundle (see below) |
 | `keystone-worklog --offline` | Never connect to the internet (or set `KEYSTONE_OFFLINE=1`) |
+| `KEYSTONE_INDEX_DIR=PATH` | Keep the search index somewhere else (by default it moves out of OneDrive/Dropbox folders by itself) |
 | `KEYSTONE_SLOW_LOG=0.5` | Log requests slower than this many seconds to the console (default 2) |
 | `KEYSTONE_DATA_DIR=PATH` | Keep the data in another folder, e.g. a second profile |
 

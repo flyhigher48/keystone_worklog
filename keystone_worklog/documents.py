@@ -26,6 +26,8 @@ from concurrent.futures.process import BrokenProcessPool
 from html.parser import HTMLParser
 from pathlib import Path
 
+from . import fsutil
+
 try:
     import pypdf
 except ImportError:
@@ -833,11 +835,10 @@ class TextCache:
         except Exception as e:  # a broken file must never stop indexing
             sections, err = [], f"could not read the file ({type(e).__name__}: {e})"
         entry = {"v": VERSION, "path": rel, "mtime": str(mtime), "sections": sections, "error": err}
-        self.dir.mkdir(parents=True, exist_ok=True)
-        f = self._file(root, rel)
-        tmp = f.with_suffix(f".{threading.get_ident()}.tmp")
-        tmp.write_text(json.dumps(entry), encoding="utf-8")
-        os.replace(tmp, f)
+        try:
+            fsutil.write_text(self._file(root, rel), json.dumps(entry))
+        except OSError:
+            pass  # only a cache: read it again next time
         return entry
 
     def warm(self, root):

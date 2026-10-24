@@ -1,4 +1,5 @@
 """Keystone web server. Start it with `keystone-worklog` (or `python app.py` in a source checkout)."""
+import hashlib
 import json
 import os
 import re
@@ -16,7 +17,7 @@ from pathlib import Path
 from flask import Flask, Response, abort, jsonify, request, send_file, send_from_directory, stream_with_context
 from werkzeug.exceptions import HTTPException
 
-from . import __version__, assistant, documents, vault, vector_index
+from . import __version__, assistant, documents, fsutil, vault, vector_index
 
 BASE = Path(__file__).resolve().parent      # the package: static/ lives here
 PROJECT_ROOT = BASE.parent                   # the repository, when running from a source checkout
@@ -92,10 +93,11 @@ def load_data():
 def save_data(payload):
     DATA_DIR.mkdir(exist_ok=True)
     if DATA_FILE.exists():  # keep one previous copy as a safety net
-        os.replace(DATA_FILE, DATA_DIR / "data.json.bak")
-    tmp = DATA_DIR / "data.json.tmp"
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    os.replace(tmp, DATA_FILE)
+        try:
+            shutil.copyfile(DATA_FILE, DATA_DIR / "data.json.bak")
+        except OSError:
+            pass  # the backup is a nicety; never fail a save over it
+    fsutil.write_text(DATA_FILE, json.dumps(payload, indent=2))
     daily_snapshot(payload)
 
 
@@ -317,10 +319,7 @@ def note_write():
                 abort(409, "A note with that name already exists")
             if mtime(p) != base:  # changed elsewhere (e.g. Obsidian) since it was opened
                 return jsonify(conflict=True, content=p.read_text(encoding="utf-8"), mtime=mtime(p)), 409
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_name(p.name + ".nwa-tmp")
-        tmp.write_text(content, encoding="utf-8")
-        os.replace(tmp, p)
+        fsutil.write_text(p, content)
     return jsonify(ok=True, mtime=mtime(p))
 
 
@@ -416,9 +415,7 @@ def note_capture():
         if line:
             new = assistant.append_under_heading(new, heading, line)
         if new != text:
-            tmp = p.with_name(p.name + ".nwa-tmp")
-            tmp.write_text(new, encoding="utf-8")
-            os.replace(tmp, p)
+            fsutil.write_text(p, new)
     return jsonify(ok=True, created=created, path=p.relative_to(root).as_posix(), mtime=mtime(p))
 
 
@@ -516,8 +513,21 @@ CHATS_DIR = DATA_DIR / "chats"
 MODEL_CACHE = DATA_DIR / "models"           # embedding model + runtime, downloaded once
 # The same files bundled for offline computers by offline_bundle.py: $KEYSTONE_MODELS_DIR, or models/ in a source checkout
 MODEL_BUNDLE = Path(os.environ.get("KEYSTONE_MODELS_DIR") or PROJECT_ROOT / "models")
-INDEX = vector_index.VectorIndex(DATA_DIR / "index") if vector_index.available else None
-TEXTS = INDEX.texts if INDEX else documents.TextCache(DATA_DIR / "index" / "docs")  # extracted document text (works without LanceDB too)
+def index_dir():
+    """Where the search index lives. It's a cache that is rewritten constantly while indexing, so it must not sit in a
+    folder OneDrive / Dropbox syncs (they lock files mid-write, which Windows reports as "Access is denied"):
+    $KEYSTONE_INDEX_DIR, else data/index – moved to the local, never-synced app-data folder when data/ is in such a folder."""
+    if os.environ.get("KEYSTONE_INDEX_DIR"):
+        return Path(os.environ["KEYSTONE_INDEX_DIR"])
+    if fsutil.in_cloud_folder(DATA_DIR):
+        local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".cache") / "keystone-worklog"
+        return local / ("index-" + hashlib.sha1(str(DATA_DIR.resolve()).encode()).hexdigest()[:10])
+    return DATA_DIR / "index"
+
+
+INDEX_DIR = index_dir()
+INDEX = vector_index.VectorIndex(INDEX_DIR) if vector_index.available else None
+TEXTS = INDEX.texts if INDEX else documents.TextCache(INDEX_DIR / "docs")  # extracted document text (works without LanceDB too)
 WRITE_TOOLS = {"create_note", "edit_note", "append_to_note", "move_note", "move_files"}
 CHAT_ID = re.compile(r"^[a-z0-9]{6,24}$")
 
@@ -843,7 +853,7 @@ def model_file(kind, p):
         try:
             with urllib.request.urlopen(url, timeout=120) as r, open(tmp, "wb") as f:
                 shutil.copyfileobj(r, f)
-            os.replace(tmp, dest)
+            fsutil.replace(tmp, dest)
         except (urllib.error.URLError, OSError) as e:
             tmp.unlink(missing_ok=True)
             abort(502, f"The embedding model isn't on this computer and couldn't be downloaded ({e}). "
@@ -881,6 +891,8 @@ def main():
     if not args.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}")).start()
     print(f"Keystone is running at http://127.0.0.1:{args.port}  (data: {DATA_DIR})  Press Ctrl+C to stop.")
+    if INDEX_DIR != DATA_DIR / "index":
+        print(f"Search index: {INDEX_DIR}  (kept outside the synced data folder)")
     app.run(host="127.0.0.1", port=args.port)  # never expose this on a network: it reads and writes your vault
 
 

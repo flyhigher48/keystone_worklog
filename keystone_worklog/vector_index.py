@@ -5,6 +5,7 @@ chunks notes and documents (PDF, Word, PowerPoint, Excel, emails, text – see d
 tracks which ones are stale, stores vectors and answers nearest-neighbour queries.
 If LanceDB isn't installed, `available` is False and the app falls back to keyword search.
 """
+import atexit
 import json
 import os
 import re
@@ -14,7 +15,7 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
-from . import documents
+from . import documents, fsutil
 
 try:
     import lancedb
@@ -42,6 +43,7 @@ HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 MAX_CHARS, OVERLAP, MAX_CHUNKS = 800, 120, 200
 DOC_MAX_CHUNKS = 2500   # documents can be long: a 600-page PDF is ~2,000 chunks
 BATCH_CHUNKS = 300      # roughly how many chunks one /api/index/next hands to the browser
+SAVE_EVERY = 2.0        # seconds between writes of index_state.json
 
 
 def vault_notes(root):
@@ -119,19 +121,36 @@ class VectorIndex:
         self.lock = threading.RLock()
         self._db = None
         self._writes = 0
+        self._st, self._dirty, self._saved = None, False, 0.0
+        atexit.register(self.flush)
 
-    # ---------- state ----------
+    # ---------- state: kept in memory, written to disk at most every SAVE_EVERY seconds ----------
+    # (writing it after every file made Windows report "Access is denied" whenever OneDrive or an antivirus held it;
+    # if Keystone stops before a save, the last few files are simply embedded again – their rows are replaced, never doubled)
     def _state(self):
-        try:
-            return json.loads(self.state_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {}
+        with self.lock:
+            if self._st is None:
+                try:
+                    self._st = json.loads(self.state_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    self._st = {}
+            return self._st
 
-    def _save_state(self, st):
-        self.dir.mkdir(parents=True, exist_ok=True)
-        tmp = self.state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(st), encoding="utf-8")
-        os.replace(tmp, self.state_path)
+    def _save_state(self, st, force=False):
+        with self.lock:
+            self._st, self._dirty = st, True
+            if force or time.monotonic() - self._saved >= SAVE_EVERY:
+                self.flush()
+
+    def flush(self):
+        with self.lock:
+            if not self._dirty or self._st is None:
+                return
+            try:
+                fsutil.write_text(self.state_path, json.dumps(self._st))
+                self._dirty, self._saved = False, time.monotonic()
+            except OSError:
+                pass  # still locked after the retries: kept in memory, saved with the next change
 
     def _db_conn(self):
         if self._db is None:
@@ -166,6 +185,7 @@ class VectorIndex:
                 self._db_conn().drop_table(TABLE)
             except Exception:
                 pass
+            self._st, self._dirty = {}, False
             try:
                 self.state_path.unlink()
             except OSError:
@@ -239,8 +259,9 @@ class VectorIndex:
 
     def known_files(self, root):
         """{path: state entry} for files the index has seen (for listing files of unknown type without opening them)."""
-        st = self._state()
-        return st.get("files", {}) if st.get("root") == str(root) else {}
+        with self.lock:
+            st = self._state()
+            return dict(st.get("files", {})) if st.get("root") == str(root) else {}
 
     def chunks_for(self, root, rel, mtime=None):
         """(chunks, error) for one note or document, ready for the browser to embed."""
