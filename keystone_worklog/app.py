@@ -17,7 +17,7 @@ from pathlib import Path
 from flask import Flask, Response, abort, jsonify, request, send_file, send_from_directory, stream_with_context
 from werkzeug.exceptions import HTTPException
 
-from . import __version__, assistant, documents, fsutil, vault, vector_index
+from . import __version__, assistant, documents, fsutil, msproject, vault, vector_index
 
 BASE = Path(__file__).resolve().parent      # the package: static/ lives here
 PROJECT_ROOT = BASE.parent                   # the repository, when running from a source checkout
@@ -81,6 +81,17 @@ def json_errors(e):
     if request.path.startswith("/api/"):
         return jsonify(error=e.description), e.code
     return e
+
+
+@app.errorhandler(Exception)
+def unexpected_errors(e):
+    """Anything unexpected: the full story in the console, and a readable message for the page (not just "500")."""
+    import traceback
+    print(f"[keystone] error in {request.method} {request.path}:\n" + "".join(traceback.format_exception(e)), flush=True)
+    msg = f"{type(e).__name__}: {e}"
+    if isinstance(e, PermissionError):
+        msg += " – another program has this file open (antivirus, backup or sync tool, or a second copy of Keystone)."
+    return (jsonify(error=msg), 500) if request.path.startswith("/api/") else (msg, 500)
 
 
 # ---------- tracker data ----------
@@ -709,6 +720,109 @@ def files_move():
     return jsonify(res)
 
 
+# ---------- planner: one JSON file per plan in data/plans/ ----------
+PLANS_DIR = DATA_DIR / "plans"
+PLAN_ID = re.compile(r"^p_[a-f0-9]{8}$")
+
+
+def plan_path(pid):
+    if not PLAN_ID.match(pid or ""):
+        abort(400, "Bad plan id")
+    return PLANS_DIR / f"{pid}.json"
+
+
+def read_plan(pid):
+    p = plan_path(pid)
+    plan = fsutil.read_json(p, default=None)
+    if plan is None:
+        abort(404, "Plan not found")
+    return plan
+
+
+def check_plan(plan):
+    if not isinstance(plan, dict) or not isinstance(plan.get("tasks"), list):
+        abort(400, "A plan needs a list of tasks")
+    uids = [t.get("uid") for t in plan["tasks"] if isinstance(t, dict)]
+    if len(uids) != len(plan["tasks"]) or len(set(uids)) != len(uids) or not all(isinstance(u, int) and u > 0 for u in uids):
+        abort(400, "Every task needs a unique positive number (uid)")
+
+
+@app.get("/api/plans")
+def plans_list():
+    out = []
+    for f in sorted(PLANS_DIR.glob("p_*.json")) if PLANS_DIR.is_dir() else []:
+        if not PLAN_ID.match(f.stem):  # skip the .bak.json copies
+            continue
+        try:
+            j = fsutil.read_json(f, default=None) or {}
+        except OSError:
+            continue
+        out.append({"id": j.get("id", f.stem), "name": j.get("name", ""), "projectId": j.get("projectId"), "tasks": len(j.get("tasks") or []),
+                    "updated": j.get("updated"), "rev": j.get("rev", 0), "template": bool(j.get("template"))})
+    return jsonify(plans=sorted(out, key=lambda x: (x["name"] or "").lower()))
+
+
+@app.post("/api/plans")
+def plan_create():
+    plan = json_body().get("plan")
+    check_plan(plan)
+    plan["id"], plan["rev"], plan["updated"] = "p_" + secrets.token_hex(4), 1, time.strftime("%Y-%m-%dT%H:%M:%S")
+    fsutil.write_text(plan_path(plan["id"]), json.dumps(plan))
+    return jsonify(plan)
+
+
+@app.get("/api/plans/<pid>")
+def plan_get(pid):
+    return jsonify(read_plan(pid))
+
+
+@app.put("/api/plans/<pid>")
+def plan_save(pid):
+    body = json_body()
+    plan = body.get("plan")
+    check_plan(plan)
+    with LOCK:
+        cur = read_plan(pid)
+        if body.get("baseRev") is not None and body["baseRev"] != cur.get("rev"):
+            return jsonify(error="This plan was changed somewhere else (another tab?) since you opened it.", plan=cur), 409
+        try:
+            shutil.copyfile(plan_path(pid), PLANS_DIR / f"{pid}.bak.json")  # one step back, just in case
+        except OSError:
+            pass
+        plan.update(id=pid, rev=(cur.get("rev") or 0) + 1, updated=time.strftime("%Y-%m-%dT%H:%M:%S"))
+        fsutil.write_text(plan_path(pid), json.dumps(plan))
+    return jsonify(rev=plan["rev"], updated=plan["updated"])
+
+
+@app.post("/api/plans/<pid>/delete")
+def plan_delete(pid):
+    p = plan_path(pid)
+    if not p.exists():
+        abort(404, "Plan not found")
+    trash = PLANS_DIR / ".trash"
+    trash.mkdir(parents=True, exist_ok=True)
+    fsutil.replace(p, trash / f"{pid}-{time.strftime('%Y%m%d-%H%M%S')}.json")  # never deleted outright
+    return jsonify(ok=True)
+
+
+@app.post("/api/plans/import")
+def plan_import():
+    body = json_body()
+    try:
+        plan, warnings, stats = msproject.read_upload(body.get("filename") or "plan.xml", body.get("data") or "")
+    except msproject.MSProjectError as e:
+        abort(400, str(e))
+    return jsonify(plan=plan, warnings=warnings, stats=stats)
+
+
+@app.get("/api/plans/<pid>/export.xml")
+def plan_export(pid):
+    plan = read_plan(pid)
+    xml = msproject.to_mspdi(plan)
+    name = re.sub(r"[^\w\- .]+", "_", plan.get("name") or "plan").strip() or "plan"
+    return Response(xml, mimetype="application/xml", headers={"Content-Disposition": f'attachment; filename="{name}.xml"'})
+
+
 @app.post("/api/assistant/undo")
 def ai_undo():
     try:
@@ -872,6 +986,36 @@ def cdn_files(p):
     return model_file("cdn", p)
 
 
+INSTANCE_FILE = DATA_DIR / "keystone.instance"
+
+
+def running_instance():
+    """The address of another Keystone using this data folder, if one is answering."""
+    try:
+        port = int(json.loads(INSTANCE_FILE.read_text(encoding="utf-8"))["port"])
+        url = f"http://127.0.0.1:{port}"
+        with urllib.request.urlopen(url + "/api/assistant/settings", timeout=2) as r:
+            return url if r.status == 200 else None
+    except Exception:
+        return None
+
+
+def claim_instance(port):
+    try:
+        fsutil.write_text(INSTANCE_FILE, json.dumps({"pid": os.getpid(), "port": port, "started": time.time()}))
+    except OSError:
+        return
+    import atexit
+
+    def release():
+        try:
+            if json.loads(INSTANCE_FILE.read_text(encoding="utf-8")).get("pid") == os.getpid():
+                INSTANCE_FILE.unlink()
+        except Exception:
+            pass
+    atexit.register(release)
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser(prog="keystone-worklog", description="Keystone: time tracking, deliverables, notes and an AI assistant, on your own computer.")
@@ -888,6 +1032,13 @@ def main():
         global MODEL_BUNDLE
         MODEL_BUNDLE = args.models_dir.resolve()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    other = running_instance()
+    if other:
+        print(f"Keystone is already running with this data folder at {other} – open that, or stop it first.\n"
+              f"Two copies writing the same files is what makes Windows report \"Access is denied\". "
+              f"For a second, separate profile set KEYSTONE_DATA_DIR to another folder.")
+        sys.exit(1)
+    claim_instance(args.port)
     if not args.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}")).start()
     print(f"Keystone is running at http://127.0.0.1:{args.port}  (data: {DATA_DIR})  Press Ctrl+C to stop.")

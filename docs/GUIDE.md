@@ -49,7 +49,7 @@ Run from a checkout, the data stays in `./data`, which is git-ignored.
 
 ### Try it with demo data
 
-`scripts/make_demo.py` builds a complete, fictional setup in `./demo` (git-ignored): four projects with budgets, seven pay periods of hours, deliverables, follow-ups, leave and travel, and an Obsidian vault with project notes, a specs PDF, Word, Excel and PowerPoint files, saved emails, Abaqus jobs (one that finished, one that failed), a Python script, a notebook – and an `Inbox/` with nine files to file. Dates are relative to today, so it always looks current. It also writes `demo/meetings.ics` to try **Board → Calendar → Import calendar**.
+`scripts/make_demo.py` builds a complete, fictional setup in `./demo` (git-ignored): four projects with budgets, seven pay periods of hours, deliverables, follow-ups, leave and travel, and an Obsidian vault with project notes, a specs PDF, Word, Excel and PowerPoint files, saved emails, Abaqus jobs (one that finished, one that failed), a Python script, a notebook – and an `Inbox/` with nine files to file. Dates are relative to today, so it always looks current. It also writes `demo/meetings.ics` to try **Board → Calendar → Import calendar**. For the **Plan** tab it adds two project plans (Girder Bridge rehab and Runway lighting, with a baseline, people, progress, late tasks, issues and risks), a *Bridge rehab template* for **New plan**, and `demo/Culvert C-12 schedule.xml` to try **Plan → Open an MS Project file**. The baselines are worked out with Node.js when it's installed; without it the plans still work, just without baseline bars.
 
 ```bash
 python scripts/make_demo.py                              # --force rebuilds it, --llm-from data/llm.json copies your AI profiles
@@ -106,6 +106,7 @@ Nothing else is downloaded at runtime: the Markdown, math (KaTeX) and sanitizer 
 | **Timesheet** | One pay period (two Sun–Sat weeks). Each row has a project, Network, Activity, pay code and TS, plus hours per day. The top card shows your total against 80 h, split by type. Includes the pay-period check, **Fill from schedule**, **Same as last week** and **Mark as submitted**. **My usual** saves a pay period as your usual pattern and fills the empty days of another from it, skipping holidays (filled as LH), out-of-office days and days that already have hours. |
 | **Projects** | Your list of Network + Activity pairs with a name and a budget of chargeable hours. Shows hours used and remaining, deliverable progress, and a link to the project's note. |
 | **Board** | A kanban board of deliverables (To do / In progress / Blocked / Done), each linked to a project. Drag cards between columns, or click one to edit it. **Calendar** shows cards on their due dates; drag a card onto a day to set its due date. It also shows days you're out of office: add annual leave, sick leave, travel or other time away with **Out of office** (or double-click a day), and LA/LS hours you've entered on the Timesheet appear on their own. Annual and sick leave can also put the hours on the timesheet (scheduled hours on each workday, holidays skipped); the dialog shows the balance it leaves and warns about going negative or staying over the carry-over limit. Editing or deleting the entry takes those hours back off. **Import calendar** reads an `.ics` export from Outlook, Google or Apple (read-only, stored only in your data file) and shows meetings on the calendar; click one to charge its time to a project – a project whose name or network is in the title is suggested. |
+| **Plan** | Project plans like MS Project: a task grid and a Gantt timeline you can drag, milestones, dependencies and the critical path, who's working on what, progress against a baseline, and issues and risks. Opens and saves MS Project files. See [Project plans](#project-plans-plan-tab). |
 | **Follow-ups** | Emails you owe a reply: from, subject, reply-by date, project, status (To reply / Waiting on them / Done). Import a saved `.eml`, paste an email (From/Subject are filled in), or capture one. **Draft reply ✦** has Keystone write a reply for you to copy. It never sends anything. |
 | **Reports** | Budget burn-down (pick a project) plus a burn-rate table for every project, leave forecast with a use-or-lose warning, hours by project by month – the last 6 months or a whole year (CSV or a vault note) – and **pay period history** (what you marked submitted, and when). **Print / PDF** prints the page in light colours; choose *Save as PDF* in the print dialog. **Avg burn** = RG hours in the last 4 completed weeks ÷ the number of those weeks, counting only weeks since the project was first charged (before a full week exists, it uses this week so far). **Weeks left** = budget left ÷ avg burn. |
 | **Notes** | Browse and edit the Markdown notes in your Obsidian vault, with live preview, `[[wikilinks]]` and clickable checkboxes. Documents (PDF, Office, emails, code, solver files…) are listed too and open as a PDF viewer or as their text. **File the inbox** appears when there are files in `Inbox/`. |
@@ -189,6 +190,143 @@ Network  Activity  (blank)  Code  TS  (blank)  (blank)  (blank)  (blank)  (blank
 The project name is never copied. Rows with no hours are skipped, and empty days are left blank. Click **Preview** first to see exactly what will be pasted. Then click into the first cell of the portal grid and paste.
 
 Keyboard: `↑ ↓ ← →` and `Enter` move between hour cells.
+
+## Project plans (Plan tab)
+
+<img src="screenshots/plan-gantt.png" alt="The Plan tab: a task grid with IDs, durations, dates, predecessors and people beside a Gantt chart with summary bars, the critical path in red, progress, baseline bars and dependency arrows" width="900">
+
+Plans are separate from the Board: the Board holds the cards you're working on now; a plan holds the whole schedule. Each plan is one file in `data/plans/`.
+
+**Start a plan:** **Plan → New plan** (or `Ctrl+K` → *New project plan*). Pick the project, a name and a start date, and optionally a template. The plan's calendar is your work schedule (including a 9/80 day off) and holidays from Settings. Or **Open an MS Project file** to bring in an existing schedule.
+
+**What you need:** nothing beyond Keystone itself. The scheduler, the Gantt and MS Project XML import/export all run in Keystone, offline. Only reading `.mpp` files directly needs MPXJ and Java ([below](#reading-mpp-files-mpxj-and-java)).
+
+**Try it on the demo** (`python scripts/make_demo.py`, see [Try it with demo data](#try-it-with-demo-data)):
+
+- **Girder Bridge rehab** – 19 tasks in three phases, four people, progress, deadlines and baseline 0. The grey baseline bars show that the FE model and bearing design took longer than first planned. Try *Late or slipping* in the filter, the **Dashboard**, and dragging *Girder FE model* to watch the finish date move.
+- **Runway lighting** – a smaller plan that's behind: the circuit survey, photometric calcs and closure window are late, with an open issue and a risk on the **Issues & risks** tab.
+- **Bridge rehab template** – pick it under **New plan → Template**.
+- **`demo/Culvert C-12 schedule.xml`** – an MS Project XML file to try **Open an MS Project file**.
+
+### The grid and the Gantt
+
+- **Type into the grid** like a spreadsheet. Click a cell and type, or press `F2`/`Enter` to edit. `Enter` moves down, `Tab` moves right. `Insert` adds a task, `Delete` removes the selected ones.
+- **Durations:** `3d`, `2w`, `4h`, `1mo`; `0` makes a milestone. A `?` (`5d?`) marks an estimate. `3ed` is 3 *elapsed* days (weekends count).
+- **Dates:** `10/19/26`, `Oct 19` or `2026-10-19`. Typing a **Start** sets *Start No Earlier Than* (like MS Project). Typing a **Finish** changes the duration.
+- **Predecessors** use row IDs, like MS Project: `4`, `7SS`, `9FF+2d`, `12SF-25%`. A link that would make a loop is refused.
+- **People:** `Maria, Sam[50%]`. New names are added to the plan's people.
+- **Outline:** indent `Alt+Shift+→` and outdent `Alt+Shift+←`. An indented task's parent becomes a summary task whose dates and % complete come from its tasks. Outdenting a task makes the tasks below it its subtasks (as in MS Project).
+- **Link the selected tasks** in order with the link button or `Ctrl+F2` (select with `Ctrl`/`Shift`+click).
+- **On the Gantt:** drag a bar to move it (sets *Start No Earlier Than*), drag its right edge to change the duration, drag the handle inside it to set % complete, or drag from one bar onto another to link them (finish-to-start). The whole schedule moves live while you drag. `Esc` cancels. Double-click a bar for **Task details**; right-click for more.
+- **Zoom** with Day / Week / Month / Quarter / Year or `Ctrl`+mouse wheel. **Fit** shows the whole plan; **Today** scrolls to today. `Shift`+wheel scrolls sideways.
+- **Filters:** critical, late or slipping, milestones, incomplete, my tasks, and tasks with open issues. **Columns** adds WBS, total slack, baseline finish, finish variance, planned and actual hours, NWA, deadline and constraint.
+- The **milestone strip** above the chart shows every milestone; click one to jump to it.
+- **Undo / Redo:** `Ctrl+Z` / `Ctrl+Y`, the arrows at the top. Changes save on their own. If the same plan was changed in another tab, a banner lets you load their version or keep yours.
+
+**Indicators** in the second column: `✓` done, a red dot for late or missing its deadline, `⚑` an open issue or risk, `⌖` a constraint, `✎` notes, `✋` manually scheduled, `!` a conflict (for example a *Must Start On* date its links can't meet).
+
+### Task details
+
+Double-click a row's ID, or select a task and press `Shift+F2`. Here you set the constraint (as soon/late as possible, start/finish no earlier/later than, must start/finish on), a **deadline** (a flag on the chart, and a warning when the task finishes after it), priority, notes, files in the vault, and **Manually scheduled** (the task keeps the dates you give it). You also see its slack, successors, baselines, custom fields from MS Project, and its issues and risks.
+
+**Charges to (timesheet NWA):** link a task to a network/activity and the plan shows the hours you've logged on the timesheet against it (*Actual h*), next to the planned hours. Hours logged on a day go to the linked tasks that were planned for that day.
+
+### Scheduling
+
+Keystone schedules the way MS Project does. It runs a forward pass for the earliest dates, then a backward pass for slack. Tasks with no slack are on the **critical path** (red): if one slips, the finish slips. It handles:
+
+- the four link types (FS, SS, FF, SF) with lead or lag in working time, elapsed time or % of the predecessor;
+- the eight constraint types, deadlines, manually scheduled tasks and *as late as possible*;
+- progress: a started task's actual start is fixed, and finished work stays where it happened.
+
+A task is **late** when less of it is done than should be by the **status date** (top right). With no status date, "late" is measured against this morning. **Plan → Update progress to the status date** marks work scheduled before the status date as done, like MS Project's *Update Project*.
+
+### Baselines and progress
+
+**Plan → Set baseline** saves every task's start, finish, duration and work as baseline 0–10. The Gantt then draws the baseline as a thin grey bar under each task. *Baseline finish* and *Finish var.* columns show how far each task has moved. The dashboard shows how far the plan's finish has moved against the baseline.
+
+### Team, workload, issues and the dashboard
+
+<img src="screenshots/plan-team.png" alt="Team planner: one lane per person with their tasks as bars, overbooked days in red and days out of office striped" width="900">
+
+- **Team** shows one lane per person, plus *Unassigned*. Drag a bar to another person to reassign it. Overbooked days turn red, and days out of office are striped. Your own time off comes from the Keystone calendar; other people's days off are set in **Plan → People and calendars**, where you also set how much of their time each person can give (*Max %*).
+- **Workload** is a heat map of planned hours per person per week against the hours they can work. Holidays and time off are taken out.
+- **Issues & risks** is the RAID log: risks (with probability × impact and a 5×5 matrix), issues, actions and decisions. Each can have an owner, a due date and the tasks it affects. From an item's `⋯` menu you can put it on the Board, make it a follow-up, or ask Keystone about it. You can also log an issue from a task's right-click menu.
+- **Dashboard** shows the finish date against the baseline, % complete against what's expected, late and critical tasks, hours charged against hours planned, the next milestones and recent changes.
+
+<img src="screenshots/plan-dashboard.png" alt="Plan dashboard: finish date against the baseline, % complete against expected, late tasks, hours charged against planned, next milestones, late tasks and the critical path" width="900">
+
+On **Today**, a *Plans* card lists your late tasks, your tasks this week and milestones in the next two weeks across all plans.
+
+### MS Project files
+
+<img src="screenshots/plan-import.png" alt="Open an MS Project file: a preview of the plan in the file (tasks, links, people, calendars) with a project picker before anything is created" width="900">
+
+- **Open:** **Plan ▾ → Open an MS Project file** reads MS Project XML (**File → Save As → XML** in MS Project). A preview shows what's in the file before anything is created. **Plan → Update from an MS Project file** updates the open plan instead, and lists what was added, removed and changed. Links to timesheet NWAs, Board cards and files are kept.
+- **Save:** **Export → MS Project XML** downloads a file MS Project opens with **File → Open**.
+- **Nothing is lost on the way through:** everything in the imported file is kept, including fields Keystone doesn't show (extended attributes, cost, outline codes, extra calendars). On export, your changes are written into the original XML.
+- **.mpp files** (and `.mpx`/`.mpt`) can be read directly once MPXJ and Java are installed – see the next section. Without them, save the file as XML in MS Project first. Keystone never writes `.mpp`: **Export → MS Project XML** is what you open in MS Project.
+- Keystone-only fields (the NWA link, Board card, vault files, issues and risks) aren't written to the XML.
+
+The XML import and export are tested against hand-made MSPDI files that follow Microsoft's schema. Check a real plan before you rely on it: open it, export it, and open the export in MS Project.
+
+### Reading .mpp files (MPXJ and Java)
+
+Optional, and neither step needs admin rights. Keystone itself never needs Java. Without these, everything works except opening `.mpp` files directly.
+
+1. **MPXJ:** `pip install mpxj` into the same Python environment Keystone runs from. Use `pip install --user mpxj` for a user install with the system Python, or `pipx inject keystone-worklog mpxj` if Keystone was installed with pipx. `pip install "keystone-worklog[mpp]"` does the same. Keystone finds it by itself. To use MPXJ jars you downloaded yourself instead, set `KEYSTONE_MPXJ` to their folder.
+2. **Java:** download the **Eclipse Temurin JRE 21** (x64) archive from [adoptium.net/temurin/releases](https://adoptium.net/temurin/releases/): the `.zip` on Windows or the `.tar.gz` on Linux. Not the `.msi` or system packages, which need admin rights. Unpack it in your own folder and set `JAVA_HOME`:
+
+   ```powershell
+   # Windows (PowerShell)
+   Expand-Archive "$HOME\Downloads\OpenJDK21U-jre_x64_windows_hotspot_*.zip" "$env:LOCALAPPDATA\Programs\Java"
+   $jre = (Get-ChildItem "$env:LOCALAPPDATA\Programs\Java" -Directory | Select-Object -First 1).FullName
+   [Environment]::SetEnvironmentVariable("JAVA_HOME", $jre, "User")
+   & "$jre\bin\java.exe" -version
+   ```
+
+   ```bash
+   # Linux
+   mkdir -p ~/.local/java
+   tar -xzf ~/Downloads/OpenJDK21U-jre_x64_linux_hotspot_*.tar.gz -C ~/.local/java
+   echo 'export JAVA_HOME="$(ls -d ~/.local/java/jdk-* | head -1)"' >> ~/.bashrc
+   source ~/.bashrc && "$JAVA_HOME/bin/java" -version
+   ```
+
+3. **Restart Keystone from a new terminal** so it sees `JAVA_HOME`, then use **Plan ▾ → Open an MS Project file** and pick the `.mpp`. Keystone looks for `java` on `PATH` first, then in `JAVA_HOME`. If either piece is missing, the message says so.
+
+On an offline computer, download the `mpxj` wheel (`pip download mpxj --no-deps -d wheels`) and the Temurin archive on a connected machine. Copy them over and install with `pip install --no-index --find-links wheels mpxj`. If a company policy blocks running `java` from your own folders, ask IT for Java or use **Save As → XML**. The `.mpp` file is converted on your computer: MPXJ turns it into MS Project XML in a temporary folder, and Keystone reads that.
+
+### Saving, history and templates
+
+- **Saving:** every change saves on its own a moment later. The status next to the plan name shows *Saving…*, then *Saved* with the time. Each plan is one file, `data/plans/p_….json`. The save before it is kept as `p_….bak.json`.
+- **Two tabs or two people on one plan:** each save carries a revision number. If the plan changed somewhere else since you opened it, Keystone doesn't overwrite it. A banner offers **Load theirs** or **Keep mine**.
+- **Undo** keeps the last 60 changes while the plan is open. Each change is also listed with its time on the Dashboard under *Recent changes*.
+- **Deleting a plan** (**Plan ▾ → Delete this plan**) moves the file to `data/plans/.trash/`. Nothing is deleted outright, so a plan can be restored by moving it back.
+- **Templates** are plans marked as templates. They're listed under **New plan**, not in the plan picker. **Plan → Save as a template** makes one from the open plan without dates, progress, issues or the project link.
+- **Calendar:** a plan uses your work schedule and holidays from Settings. The calendar is copied into the plan when it's made. If you change your schedule or holidays later, use **Plan ▾ → Use my work schedule and holidays as the calendar** to update it. An imported plan keeps MS Project's calendar until you do.
+
+### Limits
+
+- No automatic resource leveling. The Team and Workload views show who is overbooked; you move or reassign the work.
+- No costs, and no links between plans. Cost fields from MS Project are kept and exported unchanged, but not shown.
+- People's own days off feed the Team and Workload views, not the scheduling: a task still runs through a person's days off.
+- Undo of a change Keystone's assistant made to a plan is lost when the page is reloaded. The plan's undo history (`Ctrl+Z`) works as usual.
+
+### Other exports
+
+**Export** also saves an **Excel/CSV** table, **milestones** or one person's tasks as a calendar file (`.ics`), a **summary note in Obsidian** (milestones table, a Mermaid Gantt and open issues, in `Keystone/Plans/`), and **Print / PDF**. **Plan → Save as a template** keeps the tasks, links and durations (no dates or progress) for the next New plan.
+
+### Asking Keystone about a plan
+
+Profiles with tracker access can read and change plans. Try:
+
+- *What's late on the Girder Bridge plan and what's driving the finish date?*
+- *What if the FE model takes 4 more days?* (Keystone uses **simulate**, which saves nothing.)
+- *Add a QA check after the load rating, 2 days, Priya.*
+- *Log a risk that the pier 3 access permit is late, high impact, for task 9.*
+
+Changes are shown with their effect on the schedule (the finish date, tasks that move, deadlines missed) for you to **Apply** or **Reject**, and can be undone.
 
 ## Obsidian vault
 
@@ -390,6 +528,7 @@ Paths are inside your data folder: `./data` in a source checkout, otherwise the 
 | `data/llm.json` | Assistant profiles and API keys (git-ignored, owner-only). Not included in **Download backup**. |
 | `data/index/` · `data/models/` | Meaning-search index and the cached embedding model. Safe to delete; both are rebuilt. |
 | `data/chats/` · `data/assistant_undo/` | Assistant chat history and undo records. |
+| `data/plans/` | One JSON file per project plan (`p_….json`), plus a `.bak.json` with the previous save. Deleted plans go to `data/plans/.trash/`. |
 | `data/backups/` | One dated copy of `data.json` per day you use Keystone (the last 60). Restore one from **Settings → Reminders & backups**. |
 
 **Optional git history:** turn on *Keep a private git history of data.json* in Settings. Keystone creates a separate repository in `data/.git` that tracks only `data.json`, never API keys, chats or caches, and makes one commit a day. It's separate from the code repository.
@@ -417,10 +556,13 @@ keystone_worklog/
   vault.py             Markdown export and syncing deliverable ticks back from the vault
   assistant.py         assistant back end: profiles and keys, chat proxy, vault tools, undo, git commits
   vector_index.py      note and document chunking and the LanceDB vector index
+  msproject.py         MS Project XML (MSPDI) import and export; .mpp through MPXJ when it's installed
   documents.py         text from PDF, Word, PowerPoint, Excel, emails, code, notebooks, solver files and any text file (+ the text cache)
   offline_bundle.py    keystone-worklog-bundle: model + Python packages for air-gapped computers
   static/index.html    the whole web app (HTML, CSS and JS in one file)
   static/embed-worker.js  in-browser embedding model (runs in a Web Worker)
+  static/planner/      the Plan tab (ES modules): engine.js (scheduling), gantt.js (canvas timeline),
+                       ui.js (grid, dialogs, import/export), views.js (team, workload, issues, dashboard), ai.js (assistant tools)
   static/vendor/       marked (Markdown), DOMPurify (HTML sanitizer) and KaTeX (math)
 app.py                 runs the app from a source checkout (python app.py)
 scripts/make_demo.py   builds the demo data (./demo) used for the README screenshots
@@ -435,8 +577,8 @@ THIRD_PARTY_NOTICES.md licenses of the bundled and downloaded components
 No extra packages are needed. The Python tests use `unittest`, and the JavaScript tests use Node 18+'s built-in runner.
 
 ```bash
-python -m unittest discover -s tests -v     # API, vault export and sync, assistant tools, capture, chat proxy, index, documents, filing
-node --test tests/js/*.test.mjs             # holidays, schedules, pay-period check, burn rate, capture, emails, leave, timer, calendar import
+python -m unittest discover -s tests -v     # API, vault export and sync, assistant tools, capture, chat proxy, index, documents, filing, MS Project XML, plans
+node --test tests/js/*.test.mjs             # holidays, schedules, pay-period check, burn rate, capture, emails, leave, timer, calendar import, plan scheduling
 ```
 
 - **Isolation:** each Python test gets its own temporary data folder and vault (through `KEYSTONE_DATA_DIR`), so tests never touch your own `data/`.

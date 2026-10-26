@@ -157,6 +157,179 @@ def tracker_data(vault):
             "events": [], "timerLog": timer_log, "periods": periods, "timer": None}
 
 
+# ---------- project plans (Plan tab) ----------
+DAY_MIN = 480
+PEOPLE = [{"uid": 1, "name": "Me", "initials": "ME", "me": True, "maxUnits": 1},
+          {"uid": 2, "name": "Maria Lopez", "initials": "ML", "maxUnits": 1},
+          {"uid": 3, "name": "Sam Ortiz", "initials": "SO", "maxUnits": 0.5, "away": [iso(TODAY + timedelta(days=12)), iso(TODAY + timedelta(days=13))]},
+          {"uid": 4, "name": "Priya Shah", "initials": "PS", "maxUnits": 1}]
+ME, MARIA, SAM, PRIYA = 1, 2, 3, 4
+
+
+def plan_builder(nwa):
+    """(tasks, assignments, add) – add(name, days, parent, preds, pct, people, **fields) appends a task and returns its uid."""
+    tasks, assignments = [], []
+
+    def add(name, days=None, parent=None, preds=(), pct=0, people=(), **kw):
+        uid = len(tasks) + 1
+        t = {"uid": uid, "name": name, "parentUid": parent, "links": [lnk(p) if isinstance(p, int) else p for p in preds],
+             "percent": pct, "constraint": {"type": "ASAP"}, "baselines": {}, "notes": kw.pop("notes", ""), "priority": 500, "custom": {}}
+        if days is not None:
+            t["duration"] = {"minutes": int(days * DAY_MIN), "format": "d"}
+            t["milestone"] = days == 0
+            t["nwa"] = nwa
+        t.update(kw)
+        tasks.append(t)
+        assignments.extend({"taskUid": uid, "resourceUid": who, "units": units} for who, units in people)
+        return uid
+    return tasks, assignments, add
+
+
+def lnk(pred, kind="FS", lag_days=0):
+    return {"pred": pred, "type": kind, "lag": {"minutes": int(lag_days * DAY_MIN), "format": "d"}}
+
+
+def plan_shell(name, project_id, start, tasks, assignments, raid=(), resources=PEOPLE, **kw):
+    return {"version": 1, "name": name, "projectId": project_id, "start": iso(start) + "T08:00", "statusDate": None,
+            "units": {"minutesPerDay": 480, "minutesPerWeek": 2400, "daysPerMonth": 20}, "calendar": None, "calendarSource": "keystone",
+            "tasks": tasks, "resources": [dict(r) for r in resources], "assignments": assignments, "changeLog": [], "raid": list(raid), **kw}
+
+
+def demo_plan(baseline=False):
+    """The Girder Bridge rehab plan: phases, milestones, links, people, progress and a few issues and risks.
+    baseline=True gives the original estimates (shorter analysis and design) – saved as baseline 0 so the slip shows."""
+    start = sunday_of(TODAY) - timedelta(days=34)              # a Monday five weeks ago
+    tasks, assignments, add = plan_builder("4001234|0010")
+    p1 = add("Inspection and data")
+    a = add("Site inspection", 3, p1, pct=100, people=[(ME, 1), (MARIA, 1)])
+    b = add("Survey and as-builts", 4 if baseline else 5, p1, [a], pct=100, people=[(SAM, 1)])
+    c = add("Inspection report", 4, p1, [b], pct=100, people=[(ME, 1)])
+    m1 = add("Inspection complete", 0, p1, [c], pct=100)
+    p2 = add("Analysis")
+    d = add("Girder FE model (Abaqus)", 6 if baseline else 8, p2, [m1], pct=70, people=[(ME, 1)], notes="girder_v3 didn't converge – v4 with finer mesh at the bearings.")
+    e = add("Load rating", 6, p2, [d], pct=0, people=[(ME, 1), (PRIYA, 0.5)])
+    f = add("Bearing replacement design", 5 if baseline else 7, p2, [lnk(m1, "FS", 2)], pct=40, people=[(MARIA, 1)])
+    g = add("Load rating memo", 2, p2, [e], pct=0, people=[(ME, 1)], deadline=iso(TODAY + timedelta(days=12)) + "T17:00")
+    p3 = add("Design")
+    add("30% plans submitted", 0, p3, [m1], pct=100)
+    h_ = add("60% plans", 12, p3, [f, lnk(e, "SS", 3)], people=[(MARIA, 1), (PRIYA, 1)])
+    i = add("Specifications", 6, p3, [lnk(h_, "FF")], people=[(PRIYA, 1)])
+    j = add("Cost estimate", 4, p3, [h_], people=[(SAM, 1)])
+    m3 = add("60% plans submitted", 0, p3, [h_, i, j])
+    k = add("County review", 15, p3, [m3], people=[], notes="The county takes about three weeks.")
+    l_ = add("90% plans", 10, p3, [k], people=[(MARIA, 1), (PRIYA, 1)])
+    add("PS&E submitted", 0, p3, [l_, g], deadline=iso(TODAY + timedelta(days=95)) + "T17:00")
+    return plan_shell("Girder Bridge rehab", "bridge", start, tasks, assignments, raid=[
+                {"id": "r1", "kind": "risk", "title": "FE model may not converge in time for the load rating", "owner": "Me", "due": iso(TODAY + timedelta(days=5)), "status": "open",
+                 "probability": 3, "impact": 4, "mitigation": "Fall back to a line-girder rating for the memo.", "taskUids": [d, e], "created": iso(TODAY - timedelta(days=6)), "description": ""},
+                {"id": "r2", "kind": "issue", "title": "Bearing pads delivery slipped two weeks", "owner": "Sam Ortiz", "due": iso(TODAY + timedelta(days=2)), "status": "open",
+                 "probability": 0, "impact": 3, "mitigation": "", "taskUids": [f], "created": iso(TODAY - timedelta(days=3)), "description": "Fabricator says mid-month at the earliest."},
+                {"id": "r3", "kind": "risk", "title": "County review takes longer than three weeks", "owner": "Maria Lopez", "due": "", "status": "monitoring",
+                 "probability": 2, "impact": 3, "mitigation": "Pre-submittal meeting with the county.", "taskUids": [k], "created": iso(TODAY - timedelta(days=20)), "description": ""},
+                {"id": "r4", "kind": "decision", "title": "Replace bearings at Pier 3 first", "owner": "Me", "due": "", "status": "closed", "closed": iso(TODAY - timedelta(days=10)),
+                 "probability": 0, "impact": 0, "mitigation": "", "taskUids": [f], "created": iso(TODAY - timedelta(days=12)), "description": ""}])
+
+
+def runway_plan(baseline=False):
+    """Runway edge lighting: a smaller plan that is behind – the circuit survey is late and the closure window isn't confirmed."""
+    start = sunday_of(TODAY) - timedelta(days=13)              # a Monday two weeks ago
+    tasks, assignments, add = plan_builder("4005678|0020")
+    p1 = add("Existing conditions")
+    a = add("Record drawings review", 2, p1, pct=100, people=[(ME, 1)])
+    b = add("Existing circuit survey", 4 if baseline else 6, p1, [a], pct=50 if not baseline else 0, people=[(SAM, 1)],
+            notes="Night work only – two nights lost to weather.")
+    p2 = add("Design")
+    c = add("Photometric calcs", 8, p2, [a], pct=70, people=[(ME, 1)])
+    d = add("Lighting layout", 5, p2, [b, c], people=[(PRIYA, 1)])
+    e = add("Spec section 34 43 00", 4, p2, [lnk(d, "SS", 2)], people=[(ME, 0.5)], deadline=iso(TODAY + timedelta(days=15)) + "T17:00")
+    m1 = add("Design complete", 0, p2, [d, e])
+    p3 = add("Coordination")
+    f = add("Confirm night closure window", 3, p3, [a], pct=30, people=[(MARIA, 0.5)])
+    g = add("FAA review", 10, p3, [m1, f], notes="Airport ops forward it to the FAA district office.")
+    add("Bid package issued", 0, p3, [g])
+    return plan_shell("Runway lighting", "runway", start, tasks, assignments, raid=[
+        {"id": "r1", "kind": "issue", "title": "Night closure window not confirmed by airport ops", "owner": "Maria Lopez", "due": iso(TODAY + timedelta(days=4)),
+         "status": "open", "probability": 0, "impact": 4, "mitigation": "", "taskUids": [f, g], "created": iso(TODAY - timedelta(days=6)), "description": ""},
+        {"id": "r2", "kind": "risk", "title": "Existing cable is direct-buried and needs replacing", "owner": "Sam Ortiz", "due": iso(TODAY + timedelta(days=7)),
+         "status": "open", "probability": 2, "impact": 5, "mitigation": "Megger test during the survey; carry an add-alternate in the bid.", "taskUids": [b, d],
+         "created": iso(TODAY - timedelta(days=9)), "description": ""}])
+
+
+def culvert_plan():
+    """Culvert C-12 replacement – written as an MS Project XML file to try File → Open an MS Project file."""
+    start = sunday_of(TODAY) + timedelta(days=8)               # a Monday next week
+    tasks, assignments, add = plan_builder("4009012|0030")
+    p1 = add("Hydraulics")
+    a = add("100-year storm check", 3, p1, people=[(ME, 1)])
+    b = add("Hydraulic memo", 2, p1, [a], people=[(ME, 1)])
+    p2 = add("Design")
+    c = add("Pipe and headwall design", 5, p2, [b], people=[(MARIA, 1)])
+    d = add("Erosion control plan", 3, p2, [lnk(c, "SS", 2)], people=[(PRIYA, 1)])
+    e = add("Plans and quantities", 4, p2, [c, d], people=[(MARIA, 1), (PRIYA, 0.5)])
+    add("Submit to the county", 0, p2, [e])
+    return plan_shell("Culvert C-12 replacement", "culvert", start, tasks, assignments,
+                      resources=[r for r in PEOPLE if r["uid"] != SAM])
+
+
+def bridge_template():
+    """A reusable plan for the next bridge rehab: phases, tasks and links but no dates, progress or people (New plan → Template)."""
+    tasks, assignments, add = plan_builder("")
+    p1 = add("Inspection and data")
+    a = add("Site inspection", 3, p1)
+    b = add("Survey and as-builts", 5, p1, [a])
+    c = add("Inspection report", 4, p1, [b])
+    m1 = add("Inspection complete", 0, p1, [c])
+    p2 = add("Analysis")
+    d = add("FE model", 8, p2, [m1])
+    e = add("Load rating", 6, p2, [d])
+    f = add("Load rating memo", 2, p2, [e])
+    p3 = add("Design")
+    g = add("60% plans", 12, p3, [lnk(e, "SS", 3)])
+    h_ = add("Specifications", 6, p3, [lnk(g, "FF")])
+    m2 = add("60% plans submitted", 0, p3, [g, h_])
+    k = add("Agency review", 15, p3, [m2])
+    l_ = add("90% plans", 10, p3, [k])
+    add("PS&E submitted", 0, p3, [l_, f])
+    for t in tasks:
+        t.pop("nwa", None)
+    return plan_shell("Bridge rehab template", None, sunday_of(TODAY) + timedelta(days=8), tasks, [], resources=PEOPLE[:1], template=True)
+
+
+# The scheduler lives in the page (static/planner/engine.js). When Node is installed it fills in the dates and
+# baselines here too, so the demo opens with grey baseline bars and the MS Project file carries real dates.
+STAMP_JS = r"""
+import { readFileSync } from 'node:fs';
+const E = await import(process.argv[1]);
+const { plans, holidays } = JSON.parse(readFileSync(0, 'utf8'));
+const y = new Date().getFullYear();
+const cal = E.calendarFromSchedule([0, 8, 8, 8, 8, 8, 0, 0, 8, 8, 8, 8, 8, 0], '2026-01-04', Object.fromEntries(holidays.map(d => [d, 'Holiday'])), `${y - 1}-01-01`, `${y + 2}-12-31`);
+const stamp = p => { const s = E.schedule({ ...p, calendar: cal }); for (const t of p.tasks) { const r = s.byUid.get(t.uid); t.start = E.fromMin(r.es); t.finish = E.fromMin(r.ef); } return s; };
+for (const { plan, baseline } of plans) {
+  stamp(plan);
+  if (baseline) {
+    const b = E.setBaseline({ ...baseline, calendar: cal }, E.schedule({ ...baseline, calendar: cal }), 0);
+    const byUid = new Map(b.tasks.map(t => [t.uid, t.baselines]));
+    for (const t of plan.tasks) t.baselines = byUid.get(t.uid) || {};
+  }
+}
+process.stdout.write(JSON.stringify(plans.map(p => p.plan)));
+"""
+
+
+def stamp_dates(pairs):
+    """[(plan, baseline plan or None)] → the plans with start/finish (and baseline 0) filled in, or unchanged without Node."""
+    node = shutil.which("node")
+    engine = Path(__file__).resolve().parent.parent / "keystone_worklog" / "static" / "planner" / "engine.js"
+    if not node or not engine.exists():
+        return [p for p, _ in pairs], False
+    payload = json.dumps({"plans": [{"plan": p, "baseline": b} for p, b in pairs], "holidays": sorted(iso(d) for d in HOLIDAYS)})
+    r = subprocess.run([node, "--input-type=module", "-e", STAMP_JS, engine.as_uri()], input=payload, capture_output=True, text=True)
+    if r.returncode:
+        print("Couldn't schedule the demo plans with Node (they still work, without baselines):", r.stderr.strip()[-300:])
+        return [p for p, _ in pairs], False
+    return json.loads(r.stdout), True
+
+
 # ---------- documents ----------
 def make_pdf(pages):
     """A small PDF with a real text layer (what an OCR'd scan looks like to a reader)."""
@@ -434,6 +607,16 @@ def main():
         sys.exit(f"Missing package ({e.name}). Install the document packages first: pip install python-docx python-pptx openpyxl")
     (data / "data.json").write_text(json.dumps(tracker_data(vault), indent=2), encoding="utf-8")
     meetings_ics(dest / "meetings.ics")
+    (data / "plans").mkdir()
+    plans, stamped = stamp_dates([(demo_plan(), demo_plan(baseline=True)), (runway_plan(), runway_plan(baseline=True)), (culvert_plan(), None), (bridge_template(), None)])
+    now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    for pid, plan in zip(["p_0000b01d", "p_00009a1f", None, "p_0000c3e1"], plans):
+        if pid:
+            plan.update(id=pid, rev=1, updated=now)
+            (data / "plans" / f"{pid}.json").write_text(json.dumps(plan, indent=1), encoding="utf-8")
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from keystone_worklog.msproject import to_mspdi
+    (dest / "Culvert C-12 schedule.xml").write_text(to_mspdi(plans[2]), encoding="utf-8")
     if args.llm_from:
         s = json.loads(args.llm_from.read_text(encoding="utf-8"))
         s["semantic"], s["documents"] = True, True
@@ -447,7 +630,7 @@ def main():
         subprocess.run([*g, "add", "-A"], cwd=vault, check=True)
         subprocess.run([*g, "commit", "-qm", "Demo vault"], cwd=vault, check=True)
     n = sum(1 for p in vault.rglob("*") if p.is_file() and ".git" not in p.parts)
-    print(f"Demo ready in {dest}\n  data/   tracker data{' + AI profiles' if args.llm_from else ''}\n  vault/  {n} files ({len(list((vault / 'Inbox').iterdir()))} in Inbox/)\n  meetings.ics  to try Board → Calendar → Import calendar\n\n"
+    print(f"Demo ready in {dest}\n  data/   tracker data{' + AI profiles' if args.llm_from else ''}\n  vault/  {n} files ({len(list((vault / 'Inbox').iterdir()))} in Inbox/)\n  meetings.ics  to try Board → Calendar → Import calendar\n  data/plans/   2 project plans + a template (Plan tab){'' if stamped else ' – install Node.js for baselines'}\n  Culvert C-12 schedule.xml  to try Plan → Open an MS Project file\n\n"
           f"Run it (your real data is not touched):\n  KEYSTONE_DATA_DIR={data} keystone-worklog --port 5050\n")
 
 

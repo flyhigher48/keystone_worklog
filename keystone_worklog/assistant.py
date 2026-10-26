@@ -44,11 +44,8 @@ PROFILE_KEYS = ("id", "name", "baseUrl", "apiKey", "model", "trackerAccess", "st
 
 
 def load_settings(path):
-    try:
-        s = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        s = {}
-    return {**DEFAULTS, **s}
+    s = fsutil.read_json(path, default={})  # a locked file raises instead of looking empty (saving that would lose the profiles)
+    return {**DEFAULTS, **(s if isinstance(s, dict) else {})}
 
 
 def save_settings(path, s):

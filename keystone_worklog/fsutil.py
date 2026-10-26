@@ -46,6 +46,25 @@ def write_text(path, text, retry=RETRY_SECONDS, mode=None):
         raise
 
 
+def read_json(path, default=None, retry=RETRY_SECONDS):
+    """Load a JSON file, retrying while it is locked. A missing (or damaged) file gives `default`;
+    a file that stays locked raises, so a caller never mistakes "locked" for "empty"."""
+    import json
+    deadline, delay = time.monotonic() + retry, 0.02
+    while True:
+        try:
+            return json.loads(Path(path).read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return default
+        except ValueError:
+            return default
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.25)
+
+
 def in_cloud_folder(path):
     """True if `path` is inside a OneDrive / Dropbox / iCloud / Google Drive folder that syncs while files change."""
     p = str(Path(path).resolve()).lower().replace("\\", "/")

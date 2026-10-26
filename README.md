@@ -39,6 +39,7 @@ keystone-worklog
 - 🗂️ **Your notes stay plain Markdown in Obsidian.** Projects, timesheets, deliverables and follow-ups are written into your vault. Tick a checkbox in Obsidian and the Board updates.
 - 🔎 **Find any file by what's inside it.** PDFs, Word, PowerPoint, Excel, saved emails, Python scripts, notebooks and solver files (Abaqus `.inp`/`.msg`/`.dat`/`.sta`) are searched by keywords and by meaning, and results point to the page, slide, sheet or function.
 - 📥 **An inbox that files itself.** Drop files into `Inbox/` and Keystone suggests where each one belongs, from similar files and job names already in your vault. Review the table, click **Move**, undo if needed.
+- 📊 **Plan projects like in MS Project.** A Gantt you can drag, milestones, dependencies and the critical path, who's working on what, baselines, and an issues & risks log. Opens and saves MS Project XML, and shows the hours you've charged on the timesheet against each task.
 - 🤖 **An assistant that works with you.** "Log 8 hours to each project for today." "Push every card without a date to next Friday." "Summarize this note." Every change shows up as a diff to **Apply** or **Reject**, and can be undone.
 - 🔒 **Local-first and private.** Keystone runs on `127.0.0.1`. Use a local model (Ollama, LM Studio, llama.cpp) and nothing leaves your machine. API keys never reach the browser.
 - ⚡ **Fast on big vaults.** Listing never opens files, OneDrive online-only files aren't downloaded, folders can be skipped, documents are read in a separate process, and embedding runs on your GPU (WebGPU) when there is one.
@@ -68,6 +69,51 @@ Keystone reads the documents in your vault on your own computer and embeds them 
 **Settings → Search index** shows which files have been read and embedded, what's waiting and anything that couldn't be read, and an *Indexing 43%* chip in the top bar shows progress while it runs.
 
 <img src="docs/screenshots/search-index.png" alt="Search index card: progress bar, filters for Indexed, Waiting and Couldn't read, and a table of files with type, size, status, chunks and when they were indexed" width="900">
+
+### 📊 Project planning with a Gantt you can drag, and MS Project in and out
+The **Plan** tab is a project scheduler that works like MS Project: build the schedule in a spreadsheet-style grid, or drag it into shape on the timeline. It works out the critical path, slack, late tasks and missed deadlines on your own work schedule and holidays. Then it shows who is doing what, what's at risk and how much of the budget is spent. Plans open from and save to **MS Project**, and nothing in the file is lost on the way through.
+
+<img src="docs/screenshots/plan-gantt.png" alt="The Plan tab: a task grid with IDs, durations, dates and predecessors beside a Gantt chart with summary bars, the critical path in red, progress, grey baseline bars, dependency arrows and a milestone strip on top" width="900">
+
+**Plan it**
+- **Type like a spreadsheet:** durations `3d`, `2w`, `0` for a milestone; predecessors `4, 7SS+2d, 9FF`; people `Maria, Sam[50%]`. `Alt+Shift+→` indents a task into a phase, `Ctrl+Z` undoes.
+- **Or drag on the timeline:** move a bar, stretch it, drag its progress, or drag from one bar onto another to link them. The whole schedule moves live as you drag.
+- **Scheduled like MS Project:**
+  - all four link types with lead and lag;
+  - all eight constraint types, deadlines and manually scheduled tasks;
+  - the **critical path** in red, slack, and a red dot on anything late.
+- **Baselines 0–10** draw what you first planned as grey bars under each task, so slips are obvious.
+- **Status date** and **Update progress**: mark work as done up to a date, as in MS Project's *Update Project*.
+- **Templates:** save a plan as a template and start the next project from it.
+
+**Run it**
+
+| Team planner – drag a bar to another person to reassign it | Workload – planned hours per person per week |
+| --- | --- |
+| <img src="docs/screenshots/plan-team.png" alt="Team planner: one lane per person with their tasks as bars, overbooked days shaded red and days out of office striped" width="440"> | <img src="docs/screenshots/plan-workload.png" alt="Workload heat map: hours per person per week, with overbooked weeks in red and a plane icon for time off" width="440"> |
+| **Issues & risks** – a RAID log with a 5×5 risk matrix | **Dashboard** – finish against baseline, progress, hours, what's late |
+| <img src="docs/screenshots/plan-raid.png" alt="Issues and risks log: risks and an issue with owner, due date, probability times impact and linked tasks, beside a 5 by 5 risk matrix" width="440"> | <img src="docs/screenshots/plan-dashboard.png" alt="Plan dashboard: finish date 15 days later than baseline, 25% complete against 39% expected, 4 late tasks, 122 h charged of 880 h planned, plus lists of next milestones, late tasks and the critical path" width="440"> |
+
+- **People and time off:** your own leave and travel come from the Keystone calendar, and you set other people's days off and *Max %*. Overbooked days turn red.
+- **Hours from your timesheet:** link a task to a network/activity and the plan shows hours **charged** against hours **planned**.
+- **Today page:** a *Plans* card lists your late tasks, this week's tasks and the next milestones across every plan.
+- **Ask Keystone:** *"What's driving the finish date?"*, *"What if the FE model takes 4 more days?"* (a what-if that changes nothing), *"Add a QA check after the load rating, 2 days, Priya."* Every change shows how it moves the finish date before you **Apply** it, and can be undone.
+
+**Work with MS Project**
+
+| Open an MS Project file – a preview before anything is created | Export – back to MS Project, Excel, calendars, Obsidian or PDF |
+| --- | --- |
+| <img src="docs/screenshots/plan-import.png" alt="Open an MS Project file dialog: Culvert C-12 replacement, 8 tasks, 2 summaries, 1 milestone, 6 links, 3 people, 6 assignments and 1 calendar, with a project picker and Open as a new plan" width="440"> | <img src="docs/screenshots/plan-export.png" alt="The Export menu: MS Project XML, Excel or CSV, milestones as a calendar file, one person's tasks as a calendar file, an Obsidian note with a Mermaid Gantt, and Print or PDF" width="440"> |
+
+1. **From MS Project:** open your plan and use **File → Save As → XML** (*XML Format (\*.xml)*). Keystone reads that format with nothing extra installed.
+2. **Into Keystone:** **Plan ▾ → Open an MS Project file** (or `Ctrl+K` → *Open an MS Project file*), pick the `.xml`, check the preview and choose the project. Then **Open as a new plan**. Tasks, phases, links, constraints, deadlines, progress, people, assignments, calendars and baselines all come across.
+3. **Work on it** in Keystone: drag, re-link, update progress, set a baseline.
+4. **Back to MS Project:** **Export ▾ → MS Project XML**, then in MS Project use **File → Open** and pick the `.xml`. It opens as a normal project you can save as `.mpp`.
+5. **Got a newer version from someone else?** **Plan ▾ → Update from an MS Project file** merges it into the open plan. It lists what was added, removed and changed, and keeps your links to timesheet NWAs, Board cards and files.
+
+- **Nothing is lost:** fields Keystone doesn't show (costs, custom fields, outline codes, extra calendars) are kept and written back on export.
+- **`.mpp` files** can be opened directly once [MPXJ and Java are installed](#reading-mpp-files-optional), no admin rights needed. Keystone always exports XML, which MS Project opens directly.
+- **Try it:** the demo includes `demo/Culvert C-12 schedule.xml`.
 
 ### 📋 Deliverables, leave and meetings on one calendar
 
@@ -106,7 +152,7 @@ keystone-worklog                          # opens http://127.0.0.1:5000 — stop
 **Try it with demo data first** (from a source checkout – a fictional vault with projects, specs, emails and Abaqus jobs, and an inbox to file; your own data is not touched):
 
 ```bash
-python scripts/make_demo.py                     # creates ./demo
+python scripts/make_demo.py                     # creates ./demo (also two project plans for the Plan tab)
 KEYSTONE_DATA_DIR=demo/data python app.py --port 5050
 ```
 
@@ -155,7 +201,7 @@ KEYSTONE_DATA_DIR=demo/data python app.py --port 5050
 
 ### Things to ask the assistant
 
-> *"Log 8 hours to each project for today."* · *"How many hours do I still need this pay period?"* · *"What's overdue on the Board?"* · *"Set a due date of next Friday on every card that has none."* · *"Summarize the note I have open and pull out the action items."* · *"Draft a reply to my oldest follow-up."* · *"How much annual leave will I have on December 31?"* · *"Find the spec that covers elastomeric bearing pads."* · *"Which email from the county mentioned the culvert deadline?"* · *"Why did girder_v3 fail?"* · *"File my inbox."*
+> *"Log 8 hours to each project for today."* · *"How many hours do I still need this pay period?"* · *"What's overdue on the Board?"* · *"Set a due date of next Friday on every card that has none."* · *"Summarize the note I have open and pull out the action items."* · *"Draft a reply to my oldest follow-up."* · *"How much annual leave will I have on December 31?"* · *"Find the spec that covers elastomeric bearing pads."* · *"Which email from the county mentioned the culvert deadline?"* · *"Why did girder_v3 fail?"* · *"File my inbox."* · *"What's late on the bridge plan and what's driving the finish date?"* · *"What if the load rating takes a week longer?"*
 
 ---
 
@@ -207,6 +253,47 @@ Copy the resulting `models/` and `wheels/` folders over, then on the offline mac
 pip install --no-index --find-links wheels "keystone-worklog[all]"
 keystone-worklog --models-dir models --offline     # --offline: never connects to the internet
 ```
+
+
+### Reading .mpp files (optional)
+
+Keystone runs without Java. The Plan tab, Gantt and MS Project **XML** import and export all work out of the box. Java and [MPXJ](https://www.mpxj.org) are needed for one thing only: opening `.mpp` (and `.mpx`/`.mpt`) files directly. Without them, open the file in MS Project and use **File → Save As → XML**, then import that. Keystone never writes `.mpp`; it exports MS Project XML, which MS Project opens with **File → Open**.
+
+Neither step below needs admin rights.
+
+**1. MPXJ** – install it into the same Python environment that runs Keystone. Keystone finds it by itself:
+
+```bash
+pip install mpxj                          # same venv as Keystone, or: pip install "keystone-worklog[mpp]"
+pip install --user mpxj                   # if Keystone is installed for your user with the system Python
+pipx inject keystone-worklog mpxj         # if Keystone was installed with pipx
+```
+
+**2. Java** – download the **Eclipse Temurin JRE** (version 21, x64) archive from [adoptium.net/temurin/releases](https://adoptium.net/temurin/releases/): the `.zip` for Windows or the `.tar.gz` for Linux. Don't use the `.msi`/package installers; they need admin rights. Unpack it in your own folder and point `JAVA_HOME` at it.
+
+Windows (PowerShell):
+
+```powershell
+Expand-Archive "$HOME\Downloads\OpenJDK21U-jre_x64_windows_hotspot_*.zip" "$env:LOCALAPPDATA\Programs\Java"
+$jre = (Get-ChildItem "$env:LOCALAPPDATA\Programs\Java" -Directory | Select-Object -First 1).FullName
+[Environment]::SetEnvironmentVariable("JAVA_HOME", $jre, "User")   # your account only – no admin
+& "$jre\bin\java.exe" -version                                       # check it runs
+```
+
+Linux:
+
+```bash
+mkdir -p ~/.local/java
+tar -xzf ~/Downloads/OpenJDK21U-jre_x64_linux_hotspot_*.tar.gz -C ~/.local/java
+echo 'export JAVA_HOME="$(ls -d ~/.local/java/jdk-* | head -1)"' >> ~/.bashrc
+source ~/.bashrc && "$JAVA_HOME/bin/java" -version                  # check it runs
+```
+
+Then **restart Keystone from a new terminal** (so it sees `JAVA_HOME`) and use **Plan ▾ → Open an MS Project file** to pick an `.mpp`. If something is still missing, the message says which part. Keystone looks for `java` on your `PATH` first, then in `JAVA_HOME`. To use MPXJ jars you downloaded yourself, set `KEYSTONE_MPXJ` to their folder.
+
+**Offline computers:** on a connected machine, run `pip download mpxj --no-deps -d wheels` and download the Temurin archive. Copy both over, then run `pip install --no-index --find-links wheels mpxj` and unpack Java as above.
+
+**Locked-down work PCs:** some company policies block programs started from your own folders. If `java -version` is blocked, ask IT for Java, or stick with **Save As → XML**.
 
 ---
 

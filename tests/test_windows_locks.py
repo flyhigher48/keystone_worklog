@@ -102,3 +102,53 @@ class IndexDirTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LockedReadTest(unittest.TestCase):
+    def test_a_locked_file_is_never_read_as_empty(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "s.json").write_text('{"a": 1}')
+        self.assertEqual(fsutil.read_json(d / "s.json"), {"a": 1})
+        self.assertEqual(fsutil.read_json(d / "missing.json", default={}), {})
+        with mock.patch.object(Path, "read_text", side_effect=PermissionError(13, "Access is denied")):
+            with self.assertRaises(PermissionError):
+                fsutil.read_json(d / "s.json", retry=0.1)
+
+    @unittest.skipUnless(vi.available, "LanceDB is not installed")
+    def test_a_locked_index_state_does_not_wipe_the_index(self):
+        env = Env()
+        try:
+            env.put_data(sample_data(env.vault))
+            c = env.client
+            f = c.post("/api/index/next", json={"model": "m1", "limit": 1}).get_json()["files"][0]
+            c.post("/api/index/upsert", json={"model": "m1", "path": f["path"], "mtime": f["mtime"],
+                                              "chunks": [{**x, "vector": fake_vector(x["embed"])} for x in f["chunks"]]})
+            env.app.INDEX.flush()
+            fresh = vi.VectorIndex(env.app.INDEX_DIR)  # like a restart
+            with mock.patch.object(fsutil, "read_json", side_effect=PermissionError(13, "Access is denied")):
+                with self.assertRaises(PermissionError):
+                    fresh.status(env.vault, "m1")
+            self.assertEqual(fresh.status(env.vault, "m1")["indexed"], 1)  # once readable: nothing was lost
+        finally:
+            env.close()
+
+    def test_errors_reach_the_page_with_their_message(self):
+        env = Env()
+        try:
+            with mock.patch.object(env.app, "load_data", side_effect=PermissionError(13, "Access is denied")):
+                r = env.client.get("/api/data")
+            self.assertEqual(r.status_code, 500)
+            self.assertIn("another program has this file open", r.get_json()["error"])
+        finally:
+            env.close()
+
+    def test_a_second_copy_on_the_same_data_folder_is_detected(self):
+        env = Env()
+        try:
+            self.assertIsNone(env.app.running_instance())
+            env.app.INSTANCE_FILE.write_text('{"pid": 1, "port": 5999}')
+            with mock.patch("urllib.request.urlopen") as op:
+                op.return_value.__enter__.return_value.status = 200
+                self.assertEqual(env.app.running_instance(), "http://127.0.0.1:5999")
+        finally:
+            env.close()

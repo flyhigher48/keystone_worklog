@@ -32,6 +32,7 @@ classifiers = [
 [project.optional-dependencies]
 search = ["lancedb>=0.20"]   # meaning search in the AI assistant (keyword search works without it)
 documents = ["pypdf>=4.0", "python-docx>=1.1", "python-pptx>=0.6.23", "openpyxl>=3.1"]   # search inside PDF, Word, PowerPoint and Excel files
+mpp = ["mpxj"]   # read .mpp files in the Plan tab (MPXJ's jars; Java must be installed separately)
 all = ["keystone-worklog[search,documents]"]
 
 [project.scripts]
@@ -49,4 +50,4 @@ version = { attr = "keystone_worklog.__version__" }
 include = ["keystone_worklog*"]
 
 [tool.setuptools.package-data]
-keystone_worklog = ["static/*", "static/vendor/*", "static/vendor/katex/*", "static/vendor/katex/fonts/*"]
+keystone_worklog = ["static/*", "static/planner/*", "static/vendor/*", "static/vendor/katex/*", "static/vendor/katex/fonts/*"]

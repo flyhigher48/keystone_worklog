@@ -130,10 +130,8 @@ class VectorIndex:
     def _state(self):
         with self.lock:
             if self._st is None:
-                try:
-                    self._st = json.loads(self.state_path.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    self._st = {}
+                # a file that is briefly locked must never look like "no index yet" – that would wipe and rebuild it
+                self._st = fsutil.read_json(self.state_path, default={})
             return self._st
 
     def _save_state(self, st, force=False):
