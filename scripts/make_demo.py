@@ -159,10 +159,10 @@ def tracker_data(vault):
 
 # ---------- project plans (Plan tab) ----------
 DAY_MIN = 480
-PEOPLE = [{"uid": 1, "name": "Me", "initials": "ME", "me": True, "maxUnits": 1},
-          {"uid": 2, "name": "Maria Lopez", "initials": "ML", "maxUnits": 1},
-          {"uid": 3, "name": "Sam Ortiz", "initials": "SO", "maxUnits": 0.5, "away": [iso(TODAY + timedelta(days=12)), iso(TODAY + timedelta(days=13))]},
-          {"uid": 4, "name": "Priya Shah", "initials": "PS", "maxUnits": 1}]
+PEOPLE = [{"uid": 1, "name": "Me", "initials": "ME", "me": True, "maxUnits": 1, "personId": "pe_jd01"},
+          {"uid": 2, "name": "Maria Lopez", "initials": "ML", "maxUnits": 1, "personId": "pe_ml01"},
+          {"uid": 3, "name": "Sam Ortiz", "initials": "SO", "maxUnits": 0.5, "away": [iso(TODAY + timedelta(days=12)), iso(TODAY + timedelta(days=13))], "personId": "pe_so01"},
+          {"uid": 4, "name": "Priya Shah", "initials": "PS", "maxUnits": 1, "personId": "pe_ps01"}]
 ME, MARIA, SAM, PRIYA = 1, 2, 3, 4
 
 
@@ -206,13 +206,13 @@ def demo_plan(baseline=False):
     c = add("Inspection report", 4, p1, [b], pct=100, people=[(ME, 1)])
     m1 = add("Inspection complete", 0, p1, [c], pct=100)
     p2 = add("Analysis")
-    d = add("Girder FE model (Abaqus)", 6 if baseline else 8, p2, [m1], pct=70, people=[(ME, 1)], notes="girder_v3 didn't converge – v4 with finer mesh at the bearings.")
-    e = add("Load rating", 6, p2, [d], pct=0, people=[(ME, 1), (PRIYA, 0.5)])
-    f = add("Bearing replacement design", 5 if baseline else 7, p2, [lnk(m1, "FS", 2)], pct=40, people=[(MARIA, 1)])
+    d = add("Girder FE model (Abaqus)", 6 if baseline else 8, p2, [m1], pct=100, people=[(ME, 1)], notes="girder_v3 didn't converge – v4 with finer mesh at the bearings.")
+    e = add("Load rating", 6, p2, [d], pct=60, people=[(ME, 1), (PRIYA, 0.5)])
+    f = add("Bearing replacement design", 5 if baseline else 7, p2, [lnk(m1, "FS", 2)], pct=85, people=[(MARIA, 1)])
     g = add("Load rating memo", 2, p2, [e], pct=0, people=[(ME, 1)], deadline=iso(TODAY + timedelta(days=12)) + "T17:00")
     p3 = add("Design")
     add("30% plans submitted", 0, p3, [m1], pct=100)
-    h_ = add("60% plans", 12, p3, [f, lnk(e, "SS", 3)], people=[(MARIA, 1), (PRIYA, 1)])
+    h_ = add("60% plans", 12, p3, [f, lnk(e, "SS", 3)], pct=0 if baseline else 30, people=[(MARIA, 1), (PRIYA, 1)])
     i = add("Specifications", 6, p3, [lnk(h_, "FF")], people=[(PRIYA, 1)])
     j = add("Cost estimate", 4, p3, [h_], people=[(SAM, 1)])
     m3 = add("60% plans submitted", 0, p3, [h_, i, j])
@@ -300,14 +300,16 @@ def bridge_template():
 STAMP_JS = r"""
 import { readFileSync } from 'node:fs';
 const E = await import(process.argv[1]);
-const { plans, holidays } = JSON.parse(readFileSync(0, 'utf8'));
+const C = await import(process.argv[2]);
+const { plans, holidays, dir, model } = JSON.parse(readFileSync(0, 'utf8'));
 const y = new Date().getFullYear();
 const cal = E.calendarFromSchedule([0, 8, 8, 8, 8, 8, 0, 0, 8, 8, 8, 8, 8, 0], '2026-01-04', Object.fromEntries(holidays.map(d => [d, 'Holiday'])), `${y - 1}-01-01`, `${y + 2}-12-31`);
 const stamp = p => { const s = E.schedule({ ...p, calendar: cal }); for (const t of p.tasks) { const r = s.byUid.get(t.uid); t.start = E.fromMin(r.es); t.finish = E.fromMin(r.ef); } return s; };
 for (const { plan, baseline } of plans) {
   stamp(plan);
   if (baseline) {
-    const b = E.setBaseline({ ...baseline, calendar: cal }, E.schedule({ ...baseline, calendar: cal }), 0);
+    const bs = E.schedule({ ...baseline, calendar: cal }), b = E.setBaseline({ ...baseline, calendar: cal }, bs, 0);
+    C.baselineCosts(b, bs, C.planContext(b, dir, model), 0);  // planned cost at the original estimates
     const byUid = new Map(b.tasks.map(t => [t.uid, t.baselines]));
     for (const t of plan.tasks) t.baselines = byUid.get(t.uid) || {};
   }
@@ -322,13 +324,188 @@ def stamp_dates(pairs):
     engine = Path(__file__).resolve().parent.parent / "keystone_worklog" / "static" / "planner" / "engine.js"
     if not node or not engine.exists():
         return [p for p, _ in pairs], False
-    payload = json.dumps({"plans": [{"plan": p, "baseline": b} for p, b in pairs], "holidays": sorted(iso(d) for d in HOLIDAYS)})
-    r = subprocess.run([node, "--input-type=module", "-e", STAMP_JS, engine.as_uri()], input=payload, capture_output=True, text=True)
+    doc = people_doc()
+    payload = json.dumps({"plans": [{"plan": p, "baseline": b} for p, b in pairs], "holidays": sorted(iso(d) for d in HOLIDAYS), "dir": doc, "model": doc["costModels"][0]})
+    r = subprocess.run([node, "--input-type=module", "-e", STAMP_JS, engine.as_uri(), (engine.parent / "costs.js").as_uri()], input=payload, capture_output=True, text=True)
     if r.returncode:
         print("Couldn't schedule the demo plans with Node (they still work, without baselines):", r.stderr.strip()[-300:])
         return [p for p, _ in pairs], False
     return json.loads(r.stdout), True
 
+
+
+# ---------- team costs: People & rates, ERP exports, a cost ledger, status history ----------
+STAFF = [  # id, directory name, how the ERP writes it, employee ID, category, pay per hour, plan resource uid
+    ("pe_jd01", "Jordan Doe", "DOE, JORDAN", "00398812", "Engineer IV", 58.40, ME),
+    ("pe_ml01", "Maria Lopez", "LOPEZ, MARIA", "00412873", "Senior Engineer", 65.00, MARIA),
+    ("pe_so01", "Sam Ortiz", "ORTIZ, SAMUEL", "00377120", "Survey Technician", 36.50, SAM),
+    ("pe_ps01", "Priya Shah", "SHAH, PRIYA", "00451009", "Engineer II", 44.00, PRIYA),
+]
+FRINGE = 0.31
+LAYOUT_HEAD = ["Posting Date", "Work Date", "Employee Name", "Employee ID", "Network", "Activity", "Hours", "Pay Type", "Pay Amount", "Fringe Amount", "Cost Element", "Document No.", "Description"]
+
+
+def people_doc():
+    """data/people.json: the team, dated pay rates, two cost models and the master ERP layout."""
+    jan = iso(date(TODAY.year, 1, 4))
+    people = [{"id": i, "name": n, "aliases": [erp], "employeeId": emp, "category": cat, "maxUnits": 0.5 if i == "pe_so01" else 1,
+               "away": [iso(TODAY + timedelta(days=12)), iso(TODAY + timedelta(days=13))] if i == "pe_so01" else [], "me": i == "pe_jd01", "active": True}
+              for i, n, erp, emp, cat, _, _ in STAFF]
+    rates = [{"who": i, "base": r if i != "pe_ml01" else 62.50, "from": jan} for i, _, _, _, _, r, _ in STAFF]
+    rates.append({"who": "pe_ml01", "base": 65.00, "from": iso(date(TODAY.year, 7, 5))})  # Maria's July raise
+    rates += [{"who": "cat:CAD Technician", "base": 38.00, "from": jan}, {"who": "default", "base": 45.00, "from": jan}]
+    charges = [{"name": "Overhead", "kind": "pctBase", "value": 85}, {"name": "Service charge", "kind": "pctRunning", "value": 6}, {"name": "IT & admin", "kind": "perHour", "value": 4.25}]
+    return {"rev": 1, "people": people, "rates": rates,
+            "costModels": [{"id": "cm_county", "name": "County contract", "base": "erp", "fringePct": FRINGE * 100, "adders": charges, "payTypes": {"OT": 1.5}, "nonLaborPct": 5, "isDefault": True},
+                           {"id": "cm_rate", "name": "Hours × rate (estimates)", "base": "rate", "fringePct": FRINGE * 100, "adders": charges, "payTypes": {"OT": 1.5}, "nonLaborPct": 0}],
+            "layouts": [{"id": "ly_demo01", "name": "Labor distribution report", "master": True, "dateOrder": "mdy", "decimalComma": False,
+                         "fields": {"post": ["Posting Date"], "date": ["Work Date"], "person": ["Employee Name"], "emp": ["Employee ID"], "nwa": ["Network", "Activity"],
+                                    "hours": ["Hours"], "payType": ["Pay Type"], "pay": ["Pay Amount"], "fringe": ["Fringe Amount"], "category": ["Cost Element"],
+                                    "doc": ["Document No."], "desc": ["Description"]}}],
+            "settings": {"currency": "$", "dateOrder": "mdy"}}
+
+
+def posting_date(d):
+    """The ERP posts a week's labor on the Saturday that ends it."""
+    return d + timedelta(days=(5 - d.weekday()) % 7)
+
+
+def erp_lines(plans, periods):
+    """Charge lines for everyone: other people from the plans' schedules, you from your own timesheet."""
+    rate = {i: r for i, _, _, _, _, r, _ in STAFF}
+    who = {res: (i, erp, emp) for i, _, erp, emp, _, _, res in STAFF}
+    lines, doc = [], 4900012000
+    overrun = {MARIA: 1.15, SAM: 1.1, PRIYA: 1.1}
+
+    def pay_for(pid, d, hrs, ptype="RG"):
+        r = rate[pid] if not (pid == "pe_ml01" and d < date(TODAY.year, 7, 5)) else 62.50
+        pay = round(hrs * r * (1.5 if ptype == "OT" else 1), 2)
+        return pay, round(pay * FRINGE, 2)
+
+    for plan, nwa in plans:
+        for a in plan["assignments"]:
+            if a["resourceUid"] == ME:
+                continue
+            t = next(x for x in plan["tasks"] if x["uid"] == a["taskUid"])
+            if not t.get("start") or not t.get("duration") or t.get("milestone"):
+                continue
+            d0, d1 = date.fromisoformat(t["start"][:10]), date.fromisoformat(t["finish"][:10])
+            done_by = d1 if t["percent"] >= 100 else min(d1, TODAY - timedelta(days=1)) if t["percent"] > 0 or d0 < TODAY else d0 - timedelta(days=1)
+            d = d0
+            while d <= done_by:
+                if d.weekday() < 5 and d not in HOLIDAYS:
+                    pid, erp, emp = who[a["resourceUid"]]
+                    hrs = round(8 * a["units"] * overrun.get(a["resourceUid"], 1) * 4) / 4
+                    pay, fr = pay_for(pid, d, hrs)
+                    doc += 1
+                    lines.append({"date": d, "name": erp, "emp": emp, "nwa": nwa, "hours": hrs, "payType": "RG", "pay": pay, "fringe": fr, "category": "Labor", "doc": str(doc), "desc": t["name"]})
+                d += timedelta(days=1)
+    nwas = {f"{p['network']}|{p['activity']}" for p in PROJECTS}
+    for start, per in periods.items():  # your hours: straight from the timesheet
+        for wi, w in enumerate(per["weeks"]):
+            for r in w["rows"]:
+                key = f"{r['network']}|{r['activity']}"
+                if r["code"] != "RG" or key not in nwas or key == "4000001|0090":
+                    continue
+                for di, v in enumerate(r["h"]):
+                    if not v or float(v) <= 0:
+                        continue
+                    d = date.fromisoformat(start) + timedelta(days=wi * 7 + di)
+                    pay, fr = pay_for("pe_jd01", d, float(v))
+                    doc += 1
+                    lines.append({"date": d, "name": "DOE, JORDAN", "emp": "00398812", "nwa": key, "hours": float(v), "payType": "RG", "pay": pay, "fringe": fr, "category": "Labor", "doc": str(doc), "desc": "Timesheet"})
+    for l in lines:
+        l["post"] = posting_date(l["date"])
+    return lines, doc
+
+
+def erp_rows(lines):
+    rows = []
+    for l in sorted(lines, key=lambda x: (x["post"], x["nwa"], x["name"] or "", x["date"])):
+        net, act = l["nwa"].split("|")
+        rows.append([l["post"].strftime("%m/%d/%Y"), l["date"].strftime("%m/%d/%Y"), l["name"], l["emp"], net, act, l["hours"], l["payType"],
+                     l["pay"], l["fringe"], l["category"], l["doc"], l["desc"]])
+    return rows
+
+
+def erp_exports(dest, data, plans, periods):
+    """Two ERP exports (an older one already imported, and a newer one that overlaps it), the ledgers, and budgets."""
+    lines, doc = erp_lines(plans, periods)
+    sat = TODAY - timedelta(days=(TODAY.weekday() - 5) % 7 or 7)   # the last Saturday before today: posted through
+    cut_a = sat - timedelta(days=21)
+    a = [l for l in lines if l["post"] <= cut_a]
+    b = [l for l in lines if cut_a - timedelta(days=13) <= l["post"] <= sat]
+    # the newer export corrects the older one: a reversal and a re-post, plus overtime, a travel bill and someone new
+    fix = next((l for l in b if l["name"] == "ORTIZ, SAMUEL" and l["post"] <= cut_a), None)
+    if fix:
+        doc += 1
+        b.append({**fix, "hours": -fix["hours"], "pay": -fix["pay"], "fringe": -fix["fringe"], "doc": str(doc), "desc": "Reversal – wrong network", "post": cut_a + timedelta(days=7)})
+        doc += 1
+        b.append({**fix, "nwa": "4005678|0020", "doc": str(doc), "desc": "Re-posted to runway lighting", "post": cut_a + timedelta(days=7)})
+    late = sat - timedelta(days=9)
+    doc += 1
+    b.append({"date": late, "post": sat, "name": "SHAH, PRIYA", "emp": "00451009", "nwa": "4001234|0010", "hours": 3, "payType": "OT", "pay": round(3 * 44 * 1.5, 2), "fringe": round(3 * 44 * 1.5 * FRINGE, 2), "category": "Labor", "doc": str(doc), "desc": "60% plans – evening push"})
+    for k in range(3):
+        d = sat - timedelta(days=12 - k)
+        if d.weekday() < 5:
+            doc += 1
+            b.append({"date": d, "post": sat, "name": "NGUYEN, LINH", "emp": "00466230", "nwa": "4001234|0010", "hours": 6, "payType": "RG", "pay": 228.0, "fringe": 70.68, "category": "Labor", "doc": str(doc), "desc": "CAD support – 60% plans"})
+    doc += 1
+    b.append({"date": sat - timedelta(days=15), "post": sat, "name": "", "emp": "", "nwa": "4001234|0010", "hours": "", "payType": "", "pay": 412.80, "fringe": "", "category": "Travel", "doc": str(doc), "desc": "Site visit mileage and lodging"})
+    title = lambda through: [["Labor Distribution – Project Charges"], [f"Posting dates through {through.strftime('%m/%d/%Y')} · run {TODAY.strftime('%m/%d/%Y')}"], []]
+    name_a, name_b = f"ERP labor report {cut_a.strftime('%b %d')}.xlsx", f"ERP labor report {sat.strftime('%b %d')}.xlsx"
+    make_xlsx(dest / name_a, [("Charges", title(cut_a) + [LAYOUT_HEAD] + erp_rows(a))])
+    make_xlsx(dest / name_b, [("Charges", title(sat) + [LAYOUT_HEAD] + erp_rows(b))])
+    # the older export is already in the ledgers (as if imported last month)
+    costs = data / "costs"
+    costs.mkdir()
+    for p in PROJECTS:
+        key = f"{p['network']}|{p['activity']}"
+        mine = [l for l in a if l["nwa"] == key]
+        if not mine:
+            continue
+        canon = [{k: v for k, v in {"date": iso(l["date"]), "post": iso(l["post"]), "name": l["name"], "emp": l["emp"], "hours": l["hours"], "pay": l["pay"], "fringe": l["fringe"],
+                                    "payType": l["payType"], "category": l["category"], "nwa": key, "doc": l["doc"], "desc": l["desc"], "batch": "b_demo0001"}.items() if v not in ("", None)} for l in mine]
+        led = {"projectId": p["id"], "postedThrough": iso(cut_a), "rev": 1, "lines": canon,
+               "batches": [{"id": "b_demo0001", "source": name_a, "layout": "Labor distribution report", "imported": iso(cut_a + timedelta(days=3)) + "T09:12:00",
+                            "covers": {"from": min(x["post"] for x in canon), "to": iso(cut_a)}, "rows": len(canon), "replaced": 0,
+                            "hours": round(sum(x.get("hours", 0) for x in canon), 2), "pay": round(sum(x.get("pay", 0) for x in canon), 2)}]}
+        f = costs / f"{p['id']}.json"
+        f.write_text(json.dumps(led), encoding="utf-8")
+        f.chmod(0o600)
+    return name_a, name_b, cut_a, sat
+
+
+def status_history(plan, numbers):
+    """Three weekly status snapshots for the bridge plan, with the milestones slipping a little each week."""
+    snaps = []
+    friday = TODAY - timedelta(days=(TODAY.weekday() - 4) % 7 or 7)
+    leafs = [t for t in plan["tasks"] if t.get("duration")]
+    for k, frac in enumerate([0.3, 0.6, 0.85]):
+        when = friday - timedelta(days=7 * (2 - k))
+        shift = lambda t, key="finish": iso(date.fromisoformat(t["baselines"]["0"][key][:10]) + timedelta(days=round((date.fromisoformat(t[key][:10]) - date.fromisoformat(t["baselines"]["0"][key][:10])).days * frac)))
+        ms = {str(t["uid"]): shift(t) for t in leafs if t.get("milestone") and t.get("baselines", {}).get("0")}
+        pct_then = lambda t: 100 if t["percent"] >= 100 and t["finish"][:10] <= iso(when) else min(t["percent"], round(t["percent"] * (0.55 + 0.2 * k) / 5) * 5)
+        tasks = {str(t["uid"]): [t["start"][:10], shift(t) if t.get("baselines", {}).get("0") else t["finish"][:10], pct_then(t), t["name"]] for t in leafs}
+        bac = numbers["bac"]
+        pct = round(numbers["pct"] * (0.62 + 0.15 * k)); exp = pct + 5 + 3 * k
+        pv, ev = bac * exp / 100, bac * pct / 100
+        cpi = [0.97, 0.93, 0.9][k]
+        ac = ev / cpi
+        rag = [("green", "On plan."), ("amber", "FE model running late; load rating start moved."), ("amber", "FE model 2 days late; 60% submittal pushed.")][k]
+        snaps.append({"id": "s_" + iso(when), "date": iso(when), "statusDate": iso(when),
+                      "rag": {"overall": rag[0], "schedule": rag[0], "cost": "green" if cpi > 0.95 else "amber", "scope": "green",
+                              "reasons": {"overall": rag[1], "schedule": rag[1] if rag[0] != "green" else "", "cost": "" if cpi > 0.95 else f"CPI {cpi:.2f} (below 0.95)"}},
+                      "finish": max(ms.values()) if ms else plan["tasks"][-1]["finish"][:10], "baselineFinish": numbers["baselineFinish"], "pct": pct, "pctExpected": exp,
+                      "milestones": ms, "tasks": tasks, "postedThrough": iso(when - timedelta(days=6)),
+                      "ev": {"bac": round(bac), "pv": round(pv), "ev": round(ev), "ac": round(ac), "spi": round(ev / pv, 2), "cpi": cpi, "eac": round(ac + (bac - ev) / cpi),
+                             "evH": None, "acH": None, "budget": numbers["budget"], "runOut": None},
+                      "raid": [{"id": x["id"], "kind": x["kind"], "title": x["title"], "score": x["probability"] * x["impact"], "owner": x["owner"], "due": x["due"]} for x in plan["raid"] if x["status"] != "closed" and (k > 0 or x["id"] != "r2")],
+                      "openRisks": 2, "openIssues": 0 if k == 0 else 1,
+                      "done": [["Inspection report", "◆ Inspection complete"], ["◆ 30% plans submitted"], ["Bearing pads delivery confirmed"]][k],
+                      "next": [["Girder FE model (Abaqus)", "Bearing replacement design"], ["Girder FE model – finer mesh at the bearings", "Load rating"], ["Load rating", "60% plans"]][k],
+                      "decisions": [] if k < 2 else ["Approve the line-girder fallback for the rating memo"], "notes": "", "by": "you"})
+    return snaps
 
 # ---------- documents ----------
 def make_pdf(pages):
@@ -605,15 +782,41 @@ def main():
         build_vault(vault)
     except ImportError as e:
         sys.exit(f"Missing package ({e.name}). Install the document packages first: pip install python-docx python-pptx openpyxl")
-    (data / "data.json").write_text(json.dumps(tracker_data(vault), indent=2), encoding="utf-8")
-    meetings_ics(dest / "meetings.ics")
     (data / "plans").mkdir()
     plans, stamped = stamp_dates([(demo_plan(), demo_plan(baseline=True)), (runway_plan(), runway_plan(baseline=True)), (culvert_plan(), None), (bridge_template(), None)])
+    bac = lambda p: sum((t.get("baselines", {}).get("0") or {}).get("cost") or 0 for t in p["tasks"])
+    budgets = {"bridge": round(bac(plans[0]) * 1.06, -3) or 120000, "runway": round(bac(plans[1]) * 1.1, -3) or 60000, "culvert": 18000}
+    for proj in PROJECTS:
+        if proj["id"] in budgets:
+            proj.update(budgetAmount=str(int(budgets[proj["id"]])), costModelId="cm_county")
+    tracker = tracker_data(vault)
+    (data / "data.json").write_text(json.dumps(tracker, indent=2), encoding="utf-8")
+    meetings_ics(dest / "meetings.ics")
     now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     for pid, plan in zip(["p_0000b01d", "p_00009a1f", None, "p_0000c3e1"], plans):
         if pid:
             plan.update(id=pid, rev=1, updated=now)
             (data / "plans" / f"{pid}.json").write_text(json.dumps(plan, indent=1), encoding="utf-8")
+    people = data / "people.json"
+    people.write_text(json.dumps(people_doc(), indent=1), encoding="utf-8")
+    people.chmod(0o600)
+    erp_a, erp_b, cut_a, posted = erp_exports(dest, data, [(plans[0], "4001234|0010"), (plans[1], "4005678|0020")], tracker["periods"])
+    for proj, plan in (("bridge", plans[0]), ("runway", plans[1])):  # budgets also cover what was charged before the plan started
+        led = json.loads((data / "costs" / f"{proj}.json").read_text()) if (data / "costs" / f"{proj}.json").exists() else {"lines": []}
+        early = [l for l in led["lines"] if l["date"] < plan["start"][:10]]
+        full = sum((l.get("pay", 0) + l.get("fringe", 0)) * 1.85 * 1.06 + l.get("hours", 0) * 4.25 for l in early)
+        p = next(x for x in tracker["projects"] if x["id"] == proj)
+        p["budgetAmount"] = str(int(round(int(p["budgetAmount"]) + full * 1.05, -3)))
+    (data / "data.json").write_text(json.dumps(tracker, indent=2), encoding="utf-8")
+    if stamped:
+        b = plans[0]
+        leafs = [t for t in b["tasks"] if t.get("duration") and not t.get("milestone")]
+        tot = sum(t["duration"]["minutes"] for t in leafs) or 1
+        nums = {"bac": bac(b), "budget": budgets["bridge"], "pct": round(sum(t["duration"]["minutes"] * t["percent"] for t in leafs) / tot),
+                "baselineFinish": max(t["baselines"]["0"]["finish"][:10] for t in b["tasks"] if t.get("baselines", {}).get("0"))}
+        st = data / "plans" / "p_0000b01d.status.json"
+        st.write_text(json.dumps({"snapshots": status_history(b, nums)}), encoding="utf-8")
+        st.chmod(0o600)
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from keystone_worklog.msproject import to_mspdi
     (dest / "Culvert C-12 schedule.xml").write_text(to_mspdi(plans[2]), encoding="utf-8")
@@ -630,7 +833,7 @@ def main():
         subprocess.run([*g, "add", "-A"], cwd=vault, check=True)
         subprocess.run([*g, "commit", "-qm", "Demo vault"], cwd=vault, check=True)
     n = sum(1 for p in vault.rglob("*") if p.is_file() and ".git" not in p.parts)
-    print(f"Demo ready in {dest}\n  data/   tracker data{' + AI profiles' if args.llm_from else ''}\n  vault/  {n} files ({len(list((vault / 'Inbox').iterdir()))} in Inbox/)\n  meetings.ics  to try Board → Calendar → Import calendar\n  data/plans/   2 project plans + a template (Plan tab){'' if stamped else ' – install Node.js for baselines'}\n  Culvert C-12 schedule.xml  to try Plan → Open an MS Project file\n\n"
+    print(f"Demo ready in {dest}\n  data/   tracker data{' + AI profiles' if args.llm_from else ''}\n  vault/  {n} files ({len(list((vault / 'Inbox').iterdir()))} in Inbox/)\n  meetings.ics  to try Board → Calendar → Import calendar\n  data/plans/   2 project plans + a template (Plan tab){'' if stamped else ' – install Node.js for baselines'}\n  Culvert C-12 schedule.xml  to try Plan → Open an MS Project file\n  {erp_b}  to try Plan → Costs → Import from ERP (overlaps {erp_a}, already imported)\n\n"
           f"Run it (your real data is not touched):\n  KEYSTONE_DATA_DIR={data} keystone-worklog --port 5050\n")
 
 

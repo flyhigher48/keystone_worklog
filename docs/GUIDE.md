@@ -106,7 +106,7 @@ Nothing else is downloaded at runtime: the Markdown, math (KaTeX) and sanitizer 
 | **Timesheet** | One pay period (two Sun–Sat weeks). Each row has a project, Network, Activity, pay code and TS, plus hours per day. The top card shows your total against 80 h, split by type. Includes the pay-period check, **Fill from schedule**, **Same as last week** and **Mark as submitted**. **My usual** saves a pay period as your usual pattern and fills the empty days of another from it, skipping holidays (filled as LH), out-of-office days and days that already have hours. |
 | **Projects** | Your list of Network + Activity pairs with a name and a budget of chargeable hours. Shows hours used and remaining, deliverable progress, and a link to the project's note. |
 | **Board** | A kanban board of deliverables (To do / In progress / Blocked / Done), each linked to a project. Drag cards between columns, or click one to edit it. **Calendar** shows cards on their due dates; drag a card onto a day to set its due date. It also shows days you're out of office: add annual leave, sick leave, travel or other time away with **Out of office** (or double-click a day), and LA/LS hours you've entered on the Timesheet appear on their own. Annual and sick leave can also put the hours on the timesheet (scheduled hours on each workday, holidays skipped); the dialog shows the balance it leaves and warns about going negative or staying over the carry-over limit. Editing or deleting the entry takes those hours back off. **Import calendar** reads an `.ics` export from Outlook, Google or Apple (read-only, stored only in your data file) and shows meetings on the calendar; click one to charge its time to a project – a project whose name or network is in the title is suggested. |
-| **Plan** | Project plans like MS Project: a task grid and a Gantt timeline you can drag, milestones, dependencies and the critical path, who's working on what, progress against a baseline, and issues and risks. Opens and saves MS Project files. See [Project plans](#project-plans-plan-tab). |
+| **Plan** | Project plans like MS Project: a task grid and a Gantt timeline you can drag, milestones, dependencies and the critical path, who's working on what, progress against a baseline, and issues and risks. Opens and saves MS Project files. Team costs from your ERP with earned value, weekly status reports and an all-plans view. See [Project plans](#project-plans-plan-tab) and [Team costs](#team-costs-status-reports-and-the-portfolio). |
 | **Follow-ups** | Emails you owe a reply: from, subject, reply-by date, project, status (To reply / Waiting on them / Done). Import a saved `.eml`, paste an email (From/Subject are filled in), or capture one. **Draft reply ✦** has Keystone write a reply for you to copy. It never sends anything. |
 | **Reports** | Budget burn-down (pick a project) plus a burn-rate table for every project, leave forecast with a use-or-lose warning, hours by project by month – the last 6 months or a whole year (CSV or a vault note) – and **pay period history** (what you marked submitted, and when). **Print / PDF** prints the page in light colours; choose *Save as PDF* in the print dialog. **Avg burn** = RG hours in the last 4 completed weeks ÷ the number of those weeks, counting only weeks since the project was first charged (before a full week exists, it uses this week so far). **Weeks left** = budget left ÷ avg burn. |
 | **Notes** | Browse and edit the Markdown notes in your Obsidian vault, with live preview, `[[wikilinks]]` and clickable checkboxes. Documents (PDF, Office, emails, code, solver files…) are listed too and open as a PDF viewer or as their text. **File the inbox** appears when there are files in `Inbox/`. |
@@ -207,6 +207,7 @@ Plans are separate from the Board: the Board holds the cards you're working on n
 - **Runway lighting** – a smaller plan that's behind: the circuit survey, photometric calcs and closure window are late, with an open issue and a risk on the **Issues & risks** tab.
 - **Bridge rehab template** – pick it under **New plan → Template**.
 - **`demo/Culvert C-12 schedule.xml`** – an MS Project XML file to try **Open an MS Project file**.
+- **Team costs:** five people with pay rates, two cost models, three weeks of status history on the bridge plan, and two ERP exports. The older export (`ERP labor report <date>.xlsx`) is already imported. Import the newer one from **Plan → Costs → Import from ERP** to see the master layout, a new person to match, overlapping lines being replaced, and the numbers update. See [Team costs, status reports and the portfolio](#team-costs-status-reports-and-the-portfolio).
 
 ### The grid and the Gantt
 
@@ -309,7 +310,7 @@ On an offline computer, download the `mpxj` wheel (`pip download mpxj --no-deps 
 ### Limits
 
 - No automatic resource leveling. The Team and Workload views show who is overbooked; you move or reassign the work.
-- No costs, and no links between plans. Cost fields from MS Project are kept and exported unchanged, but not shown.
+- No links between plans. MS Project's own cost fields are kept and exported unchanged, but not shown; Keystone's costs come from the ERP and your rates (below), and aren't written to the MS Project file.
 - People's own days off feed the Team and Workload views, not the scheduling: a task still runs through a person's days off.
 - Undo of a change Keystone's assistant made to a plan is lost when the page is reloaded. The plan's undo history (`Ctrl+Z`) works as usual.
 
@@ -327,6 +328,122 @@ Profiles with tracker access can read and change plans. Try:
 - *Log a risk that the pier 3 access permit is late, high impact, for task 9.*
 
 Changes are shown with their effect on the schedule (the finish date, tasks that move, deadlines missed) for you to **Apply** or **Reject**, and can be undone.
+
+## Team costs, status reports and the portfolio
+
+The timesheet tracks **your** hours. A project is run by a team, though, and its budget is in dollars. Keystone brings everyone's hours and dollars in from your ERP, adds the charges the ERP leaves out, and turns that into earned value, a weekly status report and a view across all your plans.
+
+### People & rates (Settings)
+
+<img src="screenshots/people-rates.png" alt="Settings, People & rates, Cost models tab: a County contract model starting from ERP pay plus fringe, with overhead 85% of pay plus fringe, a 6% service charge on the running total and $4.25 per hour for IT and admin, about 2.57 times pay" width="900">
+
+**Settings → People & rates** (or `Ctrl+K` → *People & rates*) has four tabs:
+
+- **People:** one list for every plan and every import. Each person has a name, **ERP aliases** (how the ERP writes them, like `LOPEZ, MARIA`), an employee ID, a labor category, *Max %* and whether it's you. Plans link their people to this list by name, so the same Maria is overbooked across all plans, not one at a time. The import adds aliases for you the first time you match a name.
+- **Rates:** base pay per hour, **from a date**, for a person, a labor category, or a default. A raise only changes charges from its date on. Keystone uses the person's own rate first, then their category's, then what the ERP shows they cost (pay ÷ hours on their lines), then the default. A missing rate is flagged, never quietly $0.
+- **Cost models:** how a charge becomes its *full* cost. Pick one per project.
+  - **Start from ERP pay + fringe:** use the pay and fringe amounts on each ERP line. *Fringe %* is only used for planning and for lines without a fringe amount.
+  - **Start from hours × rate:** ignore the ERP's dollars and cost the hours from the rates, plus fringe %.
+  - **Then add** charges, in order: *% of pay*, *% of pay + fringe*, *% of the total so far* (compounding, e.g. a fee on everything), or *$ per hour*. Each can start from a date (e.g. a new overhead rate).
+  - **Overtime multipliers** (`OT=1.5`) apply to hours × rate; ERP pay already includes the premium. **Non-labor %** is added to lines without a person or hours (travel, materials).
+  - The card shows the effective multiplier (*≈ 2.57 × pay*). Hover any charge in a ledger to see its working: *pay $520.00 + fringe $161.20 + Overhead $579.02 + Service charge $75.61 + IT & admin $34.00 = $1,369.83*.
+- **ERP layouts:** the column layouts saved by the import, the **master** layout, and the currency symbol.
+
+**Pay data stays private.** `data/people.json` and the ledgers are owner-only files, they're in the daily backup, and the AI assistant never receives pay rates (see [Asking Keystone about costs](#asking-keystone-about-costs-and-status)).
+
+### Importing hours and dollars from the ERP
+
+<img src="screenshots/erp-import.png" alt="Import from the ERP, step 2: the master layout Labor distribution report is applied automatically; each Keystone field (date worked, posting date, person, employee ID, hours, pay, fringe, network) is mapped to a column of the export, with a preview of the first rows" width="900">
+
+Run your ERP's labor report for the projects, then **Plan → Costs → Import from ERP**, **Projects → Import from ERP**, or `Ctrl+K` → *Import costs from the ERP*:
+
+1. **Bring it in:** drop or choose an `.xlsx`/`.csv` file, or paste rows copied from the ERP or Excel (with the header row). Title rows above the header are fine.
+2. **Choose the columns** – once. For each thing Keystone needs, pick the column of *your* export:
+
+   | Keystone field | Notes |
+   | --- | --- |
+   | **Date worked** (required) | The day the work was done: used for progress, rates and putting hours on tasks |
+   | **Posting date** | When the ERP posted it: decides which earlier lines an export replaces. Without it, the date worked is used |
+   | **Person** | A name column, or *Last name* + *First name* |
+   | Employee ID | Matched before the name when it's there |
+   | **Hours**, **Pay amount**, **Fringe amount** | At least hours or pay. Numbers like `1,234.50`, `(1,234.50)` and `1,234.50-` all work; tick *Decimal comma* for `1.234,50` |
+   | Network / activity | One column, or two. Sends each row to the project with that NWA; without it, everything goes to one project you choose |
+   | Task / WBS code, pay type, cost element, document no., description | Optional |
+
+   Keystone guesses from the header names; the preview shows the rows as it reads them. Tick **Save these columns as a layout** and **Master layout**: from then on, any export with those columns opens straight at the preview, even if the ERP reorders them, because layouts remember column *names*.
+3. **Match projects and people:** NWAs that aren't in Projects can be ignored, added as new projects, or sent to an existing one. Names that aren't in People & rates can be added as new people, matched to someone (*Same person as…*, which saves the alias) or left unmatched for now.
+4. **Check and import:** totals per project (lines, hours, ERP pay + fringe, full cost) and the **posting dates the export covers**.
+
+**Re-importing is safe.** An ERP export is the truth for the period it was run for, so a new import **replaces** the lines of earlier imports whose posting date falls in the range it covers, reversals and corrections included. The check step says how many lines it replaces. Each project's **most recent import can be undone** (**Ledger & budget… → Undo the last import**): its lines go, the lines it replaced come back. Nothing is deleted outright; replaced and undone lines are kept in `data/costs/.trash/`.
+
+**Your own hours** are on the ERP too. **Ledger & budget…** compares your timesheet with the ERP week by week, so you can spot a day the portal never posted or hours charged to the wrong NWA. The ERP always runs behind, so for days after the last posting Keystone adds your own timesheet hours as *not yet posted*. Other people have nothing for those days until the next import.
+
+### A project's ledger and budget
+
+**Projects** has two new columns: **Budget ($)** for the whole team, and **Cost (team)**, the full cost so far and its share of the budget. **Costs** on each row (or **Plan → Costs → Ledger & budget…**) opens the project's ledger: budget, contingency, cost model, totals, cost by person (ERP pay, fringe, full cost), the imports, your timesheet against the ERP, and every charge line (filterable, exportable to CSV).
+
+### The Costs view and earned value
+
+<img src="screenshots/plan-costs.png" alt="Plan, Costs view: cost to date $46,449 (50% of the $156,000 budget used), forecast at completion $124,516, CPI 0.94, SPI 0.77, money runs out not before the finish, and an S-curve of planned value, earned value, actual cost and the forecast against the budget" width="900">
+
+**Plan → Costs** shows the plan's money (switch **$ / Hours** at the top):
+
+- **Planned cost** of every task: each person's planned hours × their full cost per hour on those days (a July raise only changes work after July). **Setting a baseline saves each task's planned cost with it**: that's what earned value measures against.
+- **Actual cost** from the ERP, put on tasks: the task column when the export has one; otherwise the tasks **that person** was scheduled on that day, split by their planned hours; otherwise the NWA's tasks that day; otherwise *Not assigned to a task* (still counted in the totals).
+- **Earned value:**
+
+  | | What it is |
+  | --- | --- |
+  | **PV**, planned value | The baseline cost of the work that should be done by the status date |
+  | **EV**, earned value | The baseline cost of the work that *is* done (baseline cost × % complete) |
+  | **AC**, actual cost | What the work cost: ERP charges (+ your unposted hours) |
+  | **CPI** = EV ÷ AC | Below 1: the work costs more than planned |
+  | **SPI** = EV ÷ PV | Below 1: behind schedule |
+  | **Forecast at completion** | AC + (baseline cost − EV) ÷ CPI. The assistant also gives *if the rest goes to plan* and *bottom-up* (remaining planned cost) |
+  | **Money runs out** | When cost so far plus the plan's remaining cost crosses the budget |
+
+- **The S-curve** draws cumulative planned value (baseline), earned value (one point per weekly status, plus today), actual cost, the forecast to the finish, and the budget. Hover for the values on any day.
+- **Tables:** by person (hours, cost, share, cost still to come), by month (planned against actual, and non-labor), by task (baseline, planned, actual, cost variance), and charges not assigned to a task.
+- **Same dates:** EV uses progress as of the *status date*; AC uses charges up to the last day of work the ERP covers. When those are more than a week apart, a banner says so and offers to set the status date to match.
+- **Before the plan:** charges to the NWA from before the plan started count against the **budget** (the tile says how much), but not in earned value or the charts.
+- A baseline set before costs were tracked has no costs: a banner offers **Add costs to baseline N** (today's rates, each task's planned hours).
+- The **grid** has optional *Cost*, *Baseline cost* and *Actual cost* columns (**Columns ▾**), *Actual h* uses ERP hours when the project has them, and the **Dashboard** shows *Cost to date* and *Forecast cost* with CPI and SPI.
+
+### Close the week and the status report
+
+<img src="screenshots/plan-status.png" alt="Plan, Status view: the last status At risk, a milestone trend chart with 60% plans submitted and PS&E submitted drifting a day later each week, and the status history table" width="900">
+
+Once a week, **Plan ▾ → Close the week…** (or **Status → Close the week…**). On Fridays, Today reminds you for each plan.
+
+<img src="screenshots/close-week.png" alt="Close the week dialog: the facts (finish against baseline, % complete against expected, cost, CPI, SPI, forecast), red/amber/green for overall, schedule, cost and scope with the suggested colour and the reason, and drafted Done this week and Next week lists" width="900">
+
+- **Red/amber/green** for overall, schedule, cost and scope, **suggested from the numbers**: SPI or CPI below 0.95 is amber, below 0.85 red; the finish moving 5+ working days since the last status is amber (15+ red); a forecast over budget is amber (10% over: red). Without costs, schedule compares % complete with what's expected. Overall is the worst of the three. You can change any of them, but a colour that differs from the suggestion needs a reason, because "why is it green?" is the first question you'll get.
+- **Done this week** and **Next week** are drafted from the plan (tasks finished since the last status; tasks starting or due in the next 7 days), and **Decisions or help needed** from open decisions and high risks. Edit them freely.
+- Saving makes a **snapshot**: the numbers, milestone dates and task dates of that day, frozen, so a past report never changes. Saving again on the same status date updates it.
+- **The report** is written from the snapshot by a fixed template (no AI needed, exact numbers, never any rates): summary, milestones (baseline, last week, now, change), done, next, budget (budget, cost, EV, PV, CPI, SPI, forecast), risks and issues, decisions. Send it as **a note in Obsidian** (`Keystone/Status/<plan>/<date>.md`), an **email draft** (`.eml`, opens as a draft in Outlook), **Copy for an email** (formatted), or **Print / PDF**.
+- **Plan → Status** shows the **milestone trend chart** (each milestone's forecast date at each status: flat is holding, rising is slipping a little every week, the dashed diagonal is "today"), the status history, and **What changed since** a status or a baseline: tasks moved (by how much), progress, tasks added or removed, issues and risks opened or closed.
+
+### All plans (portfolio)
+
+<img src="screenshots/plan-portfolio.png" alt="All plans: a table of each plan with its status, finish against baseline, % done against expected, late tasks, cost against budget and next milestone, and the milestones of every plan on one timeline" width="900">
+
+**Plan ▾ → All plans (portfolio)** (or pick it in the plan picker):
+
+- **One row per plan:** last status, forecast finish against the baseline, % done against expected, late tasks, cost against budget and the next milestone. Click a row to open the plan.
+- **Milestones across plans** on one timeline; weeks with three or more milestones due are shaded.
+- **People across all plans:** planned hours per person per week from every plan against the hours they can work (holidays, days off and *Max %* taken out). `·2` means they're on two plans that week; hover for the split.
+- **Who's free:** pick dates and the hours you need, and see everyone ranked by free time.
+
+### Asking Keystone about costs and status
+
+Profiles with tracker access also get **cost_summary**, **who_is_free**, **portfolio_summary**, **status_draft** and **close_week** (which shows the snapshot for **Apply** and can be undone). Try:
+
+- *How is the bridge project doing on cost? Who is burning the budget?*
+- *Who has 40 hours free in the first two weeks of November?*
+- *Draft this week's status for the Girder Bridge plan.* → *Save it, but make schedule amber: recovery plan agreed with the county.*
+- *Which of my plans are off track?*
+
+Each AI profile has **Allow cost data** (Settings → AI assistant), **off by default**. Off, the tools give hours, ratios like CPI and SPI, and dates, with every dollar amount hidden. On, they include dollar totals. **Pay rates are never sent** either way; keep the switch off for cloud models.
 
 ## Obsidian vault
 
@@ -528,8 +645,10 @@ Paths are inside your data folder: `./data` in a source checkout, otherwise the 
 | `data/llm.json` | Assistant profiles and API keys (git-ignored, owner-only). Not included in **Download backup**. |
 | `data/index/` · `data/models/` | Meaning-search index and the cached embedding model. Safe to delete; both are rebuilt. |
 | `data/chats/` · `data/assistant_undo/` | Assistant chat history and undo records. |
-| `data/plans/` | One JSON file per project plan (`p_….json`), plus a `.bak.json` with the previous save. Deleted plans go to `data/plans/.trash/`. |
-| `data/backups/` | One dated copy of `data.json` per day you use Keystone (the last 60). Restore one from **Settings → Reminders & backups**. |
+| `data/plans/` | One JSON file per project plan (`p_….json`), plus a `.bak.json` with the previous save and `.status.json` with its weekly status snapshots (owner-only). Deleted plans go to `data/plans/.trash/`. |
+| `data/people.json` | People & rates: the team directory, pay rates, cost models and ERP layouts (owner-only). |
+| `data/costs/` | One ERP cost ledger per project (owner-only). Lines replaced by a newer import, and undone imports, are kept in `data/costs/.trash/`. |
+| `data/backups/` | One dated copy of `data.json` per day you use Keystone (the last 60). Restore one from **Settings → Reminders & backups**. `costs-<date>/` folders hold that day's `people.json` and cost ledgers. |
 
 **Optional git history:** turn on *Keep a private git history of data.json* in Settings. Keystone creates a separate repository in `data/.git` that tracks only `data.json`, never API keys, chats or caches, and makes one commit a day. It's separate from the code repository.
 
@@ -557,12 +676,15 @@ keystone_worklog/
   assistant.py         assistant back end: profiles and keys, chat proxy, vault tools, undo, git commits
   vector_index.py      note and document chunking and the LanceDB vector index
   msproject.py         MS Project XML (MSPDI) import and export; .mpp through MPXJ when it's installed
+  costs.py             reading ERP exports (Excel, CSV, pasted rows) and the per-project cost ledgers
   documents.py         text from PDF, Word, PowerPoint, Excel, emails, code, notebooks, solver files and any text file (+ the text cache)
   offline_bundle.py    keystone-worklog-bundle: model + Python packages for air-gapped computers
   static/index.html    the whole web app (HTML, CSS and JS in one file)
   static/embed-worker.js  in-browser embedding model (runs in a Web Worker)
   static/planner/      the Plan tab (ES modules): engine.js (scheduling), gantt.js (canvas timeline),
-                       ui.js (grid, dialogs, import/export), views.js (team, workload, issues, dashboard), ai.js (assistant tools)
+                       ui.js (grid, dialogs, import/export), views.js (team, workload, issues, dashboard), ai.js (assistant tools),
+                       costs.js (rates, cost models, earned value), costui.js (People & rates, ERP import, Costs view),
+                       status.js (Close the week, reports, milestone trend), portfolio.js (all plans)
   static/vendor/       marked (Markdown), DOMPurify (HTML sanitizer) and KaTeX (math)
 app.py                 runs the app from a source checkout (python app.py)
 scripts/make_demo.py   builds the demo data (./demo) used for the README screenshots
@@ -577,8 +699,8 @@ THIRD_PARTY_NOTICES.md licenses of the bundled and downloaded components
 No extra packages are needed. The Python tests use `unittest`, and the JavaScript tests use Node 18+'s built-in runner.
 
 ```bash
-python -m unittest discover -s tests -v     # API, vault export and sync, assistant tools, capture, chat proxy, index, documents, filing, MS Project XML, plans
-node --test tests/js/*.test.mjs             # holidays, schedules, pay-period check, burn rate, capture, emails, leave, timer, calendar import, plan scheduling
+python -m unittest discover -s tests -v     # API, vault export and sync, assistant tools, capture, chat proxy, index, documents, filing, MS Project XML, plans, ERP costs
+node --test tests/js/*.test.mjs             # holidays, schedules, pay-period check, burn rate, capture, emails, leave, timer, calendar import, plan scheduling, costs and earned value
 ```
 
 - **Isolation:** each Python test gets its own temporary data folder and vault (through `KEYSTONE_DATA_DIR`), so tests never touch your own `data/`.

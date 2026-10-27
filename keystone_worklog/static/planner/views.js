@@ -255,7 +255,14 @@ function dashboardView(A) {
       tile('Finish', fmtDate(s.finish), slip == null ? 'No baseline yet' : slip > 0 ? `${E.formatDuration({ minutes: slip, format: 'd' }, S.plan.units)} later than baseline` : slip < 0 ? `${E.formatDuration({ minutes: -slip, format: 'd' }, S.plan.units)} ahead of baseline` : 'On the baseline', slip > 0 ? 'neg' : ''),
       tile('Complete', `${pct}%`, `${expected}% expected by ${S.plan.statusDate ? 'the status date' : 'today'}`, pct + 5 < expected ? 'neg' : ''),
       tile('Tasks', `${done} / ${leaves.length}`, `${late.length} late · ${crit.length} critical left`, late.length ? 'neg' : ''),
-      tile('Hours', `${Math.round(actH)} h`, `charged so far of ${Math.round(planH)} h planned`),
+      ...(() => {  // dollars when the plan has costs; hours otherwise
+        const pc = A.costs && A.costs(), m = A.money;
+        if (!pc || !(pc.actual.total || pc.ev.bac)) return [tile('Hours', `${Math.round(actH)} h`, `charged so far of ${Math.round(planH)} h planned`)];
+        const ev = pc.ev, eac = ev.eac ?? ev.eacBottomUp;
+        return [tile('Cost to date', m(pc.actual.total), pc.budget ? `${Math.round(pc.projectTotal / pc.budget * 100)}% of the ${m(pc.budget)} budget used` : `${Math.round(pc.actual.hours)} h charged`, pc.budget && pc.projectTotal > pc.budget ? 'neg' : ''),
+          tile('Forecast cost', m(eac), ev.cpi != null ? `CPI ${ev.cpi.toFixed(2)} · SPI ${ev.spi != null ? ev.spi.toFixed(2) : '–'}` : 'needs a baseline with costs', (pc.budget || ev.bac) && eac > (pc.budget || ev.bac) ? 'neg' : '')];
+      })(),
+      ...(() => { const sn = A.lastSnap && A.lastSnap(); return sn ? [tile('Status', ({ green: 'On track', amber: 'At risk', red: 'Off track' })[sn.rag.overall] || '–', `${sn.statusDate}${sn.rag.reasons && sn.rag.reasons.overall ? ' · ' + sn.rag.reasons.overall : ''}`, 'rag-t rag-' + sn.rag.overall)] : []; })(),
       tile('Issues & risks', String(open.length), (([r, i]) => `${r} risk${r === 1 ? '' : 's'} · ${i} issue${i === 1 ? '' : 's'} open`)([open.filter(x => x.kind === 'risk').length, open.filter(x => x.kind === 'issue').length]))),
     h('div', { class: 'grid2' },
       h('div', { class: 'card' }, h('h3', {}, 'Next milestones'), list(ms, 'No milestones left.')),

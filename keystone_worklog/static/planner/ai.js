@@ -2,6 +2,9 @@
 // index.html shows it for approval, then calls apply(). Reads and simulate return plain text.
 import * as E from './engine.js';
 import { planner as S, openPlan, change, rowIds, resourceText, moveTo, finishAt, setPct, flush, fmtDate, parseDateInput, descendants } from './ui.js';
+import * as CU from './costui.js';
+import * as ST from './status.js';
+import * as PF from './portfolio.js';
 
 export const TOOLS = {
   list_plans: { d: 'List the project plans in the Plan tab (id, name, number of tasks).', p: {}, req: [] },
@@ -21,7 +24,20 @@ export const TOOLS = {
     p: { plan: ['string'], kind: ['string', 'risk, issue, action or decision'], title: ['string'], description: ['string'], owner: ['string'], due: ['string', 'YYYY-MM-DD'],
       probability: ['number', '1–5, risks only'], impact: ['number', '1–5'], mitigation: ['string'], tasks: { type: 'array', items: { type: 'string' }, description: 'Affected task IDs or names' } }, req: ['kind', 'title'] },
 };
-export const WRITE = new Set(['update_tasks', 'add_tasks', 'add_raid_item']);
+Object.assign(TOOLS, {
+  cost_summary: { d: 'Costs of a plan: budget, cost to date, earned value, CPI/SPI, forecast at completion, when the money runs out, and hours and cost by person and month. Dollar amounts are only included when the profile allows cost data; pay rates are never included.',
+    p: { plan: ['string', 'Plan id or name; defaults to the open plan'] }, req: [] },
+  who_is_free: { d: 'People ranked by free hours between two dates, across every plan (their working hours minus planned work and days off).',
+    p: { from: ['string', 'YYYY-MM-DD'], to: ['string', 'YYYY-MM-DD'], hours: ['number', 'Hours needed (optional)'] }, req: ['from', 'to'] },
+  portfolio_summary: { d: 'One line per plan: last status (red/amber/green), forecast finish against the baseline, % complete against expected, late tasks, next milestone, and cost against budget (dollars only when allowed).', p: {}, req: [] },
+  status_draft: { d: 'The draft for this week\'s status of a plan: the suggested red/amber/green for overall, schedule, cost and scope with the reasons, the numbers, what was done, what is next and decisions needed. Use before close_week.',
+    p: { plan: ['string'] }, req: [] },
+  close_week: { d: 'Save this week\'s status snapshot of a plan (red/amber/green and the report contents). The user reviews it first. Give a reason for any colour that differs from status_draft\'s suggestion.',
+    p: { plan: ['string'], overall: ['string', 'green, amber or red'], schedule: ['string'], cost: ['string'], scope: ['string'],
+      reasons: { type: 'object', description: 'One line per colour: { overall, schedule, cost, scope }', properties: { overall: { type: 'string' }, schedule: { type: 'string' }, cost: { type: 'string' }, scope: { type: 'string' } } },
+      done: { type: 'array', items: { type: 'string' } }, next: { type: 'array', items: { type: 'string' } }, decisions: { type: 'array', items: { type: 'string' } }, notes: ['string'] }, req: ['overall'] },
+});
+export const WRITE = new Set(['update_tasks', 'add_tasks', 'add_raid_item', 'close_week']);
 
 const undos = new Map();  // undo snapshots stay in memory (they can be large); the chat keeps only the key
 
@@ -134,7 +150,28 @@ function preview(label, copy, edits) {
   };
 }
 
-export async function run(name, args) {
+const m$ = (prof, n) => prof && prof.costAccess ? CU.money(n) : '(hidden)';
+async function costTools(name, args, prof) {
+  const today = fmt(new Date());
+  if (name === 'who_is_free') {
+    const { plans } = await PF.load(true), from = isoDate(args.from) ? args.from : today, to = isoDate(args.to) ? args.to : today;
+    const rows = PF.whoIsFree(plans, from, to);
+    return [`Free time ${from} to ${to}, across ${plans.length} plans (working hours × Max %, minus days off and planned work):`, ...rows.map(r => `- ${r.person.name}${r.person.category ? ' (' + r.person.category + ')' : ''}: ${Math.round(r.free)} h free of ${Math.round(r.capacity)} h${args.hours && r.free >= args.hours ? ' ✓' : ''}`)].join('\n');
+  }
+  if (name === 'portfolio_summary') {
+    const { plans, totals } = await PF.load(true);
+    return plans.map(({ meta, p, s }) => {
+      const leaves = s.order.map(u => s.byUid.get(u)).filter(r => !r.summary), tot = leaves.reduce((a, r) => a + (r.dur || 0), 0);
+      const pct = tot ? Math.round(leaves.reduce((a, r) => a + (r.dur || 0) * (r.pct || 0), 0) / tot) : 0, late = leaves.filter(r => (r.late || r.missesDeadline) && r.pct < 100).length;
+      const nu = s.order.filter(u => s.byUid.get(u).milestone && s.byUid.get(u).pct < 100).sort((a, b) => s.byUid.get(a).ef - s.byUid.get(b).ef)[0], nx = nu != null && s.byUid.get(nu), nt = nx && p.tasks.find(t => t.uid === nu);
+      const proj = p.projectId && state.projects.find(x => x.id === p.projectId), c = proj && totals.get(proj.id);
+      return `- ${p.name}: ${meta.lastStatus ? `${meta.lastStatus.rag} (status ${meta.lastStatus.date})` : 'no status yet'} · finish ${E.dateOf(s.finish)} · ${pct}% done · ${late} late${nt ? ` · next milestone ${nt.name} ${E.dateOf(nx.ef)}` : ''}${c ? ` · cost ${m$(prof, c.total)}${num(proj.budgetAmount) ? ' of ' + m$(prof, num(proj.budgetAmount)) : ''}` : ''}`;
+    }).join('\n') || 'There are no plans yet.';
+  }
+  return null;
+}
+export async function run(name, args, prof = {}) {
+  try { const r = await costTools(name, args, prof); if (r != null) return r; } catch (e) { return 'Error: ' + e.message; }
   if (name === 'list_plans') {
     const list = (await api('/api/plans')).plans.filter(p => !p.template);
     return list.length ? JSON.stringify(list.map(p => ({ id: p.id, name: p.name, tasks: p.tasks, open: !!(S.plan && S.plan.id === p.id) })), null, 1) : 'There are no plans yet. The user can create one on the Plan tab or open an MS Project file there.';
@@ -194,6 +231,53 @@ export async function run(name, args) {
       });
       return preview(`Add ${items.length} task${items.length > 1 ? 's' : ''}`, copy, edits);
     }
+    if (name === 'cost_summary') {
+      await CU.ensurePlanCosts();
+      const pc = CU.planCosts();
+      if (!pc) return 'Error: the costs could not be loaded.';
+      const ev = pc.ev, hv = pc.evH, M = n => m$(prof, n);
+      const per = new Map();
+      for (const x of pc.actual.lines) { const k = x.person ? x.person.name : x.line.name || 'non-labor'; const a = per.get(k) || { h: 0, c: 0 }; a.h += x.line.hours || 0; a.c += x.cost; per.set(k, a); }
+      const months = new Map();
+      for (const x of pc.actual.lines) { const k = x.line.date.slice(0, 7); const a = months.get(k) || { h: 0, c: 0 }; a.h += x.line.hours || 0; a.c += x.cost; months.set(k, a); }
+      return [`Costs of “${plan.name}”${pc.proj ? ` (project ${projectLabel(pc.proj)}, cost model ${pc.model.name})` : ' (not linked to a project: no ERP costs)'}.${prof.costAccess ? '' : ' Dollar amounts are hidden: this AI profile does not allow cost data.'}`,
+        `ERP posted through ${pc.posted || '–'}${pc.unposted.length ? `; plus ${Math.round(pc.unposted.reduce((s2, x) => s2 + (x.line.hours || 0), 0))} h of the user's own timesheet not yet posted` : ''}. Status date ${E.dateOf(pc.statusMin)}.`,
+        `Budget ${pc.budget ? M(pc.budget) : 'not set'} · cost to date ${M(pc.actual.total)} (${Math.round(pc.actual.hours)} h) · baseline cost (BAC) ${M(ev.bac)} (${Math.round(hv.bac)} h)`,
+        `Planned value ${M(ev.pv)} · earned value ${M(ev.ev)} (${Math.round(hv.ev)} h earned of ${Math.round(hv.pv)} h planned by now) · CPI ${ev.cpi != null ? ev.cpi.toFixed(2) : '–'} · SPI ${ev.spi != null ? ev.spi.toFixed(2) : '–'}`,
+        `Forecast at completion ${M(ev.eac ?? ev.eacBottomUp)} (if the rest goes to plan: ${M(ev.eacPlan)}; bottom-up: ${M(ev.eacBottomUp)}) · ${pc.runOut != null ? 'money runs out ' + E.dateOf(pc.runOut * E.DAY) : 'the budget lasts to the finish'}`,
+        ...pc.warnings.map(w => 'Warning: ' + w.text),
+        'By person:', ...[...per].sort((a, b) => b[1].c - a[1].c).map(([n, a]) => `- ${n}: ${Math.round(a.h * 10) / 10} h, ${M(a.c)}`),
+        'By month:', ...[...months].sort().map(([k, a]) => `- ${k}: ${Math.round(a.h)} h, ${M(a.c)}`)].join('\n');
+    }
+    if (name === 'status_draft') {
+      await CU.ensurePlanCosts().catch(() => {}); await ST.loadStatus(plan.id, true);
+      const d = ST.draft(), n = d.n;
+      return [`Draft status of “${plan.name}” as of ${n.statusDate}${d.prev ? ` (last status ${d.prev.statusDate}: ${d.prev.rag.overall})` : ' (first status)'}.`,
+        `Suggested: overall ${d.rag.overall}; schedule ${d.rag.schedule}${d.rag.why.schedule ? ' – ' + d.rag.why.schedule : ''}; cost ${d.rag.cost}${d.rag.why.cost ? ' – ' + d.rag.why.cost : ''}; scope ${d.rag.scope}${d.rag.why.scope ? ' – ' + d.rag.why.scope : ''}`,
+        `Finish ${n.finish}${n.baselineFinish ? ' (baseline ' + n.baselineFinish + ')' : ''} · ${n.pct}% done, ${n.pctExpected}% expected${n.ev ? ` · CPI ${n.ev.cpi ?? '–'} · SPI ${n.ev.spi ?? '–'}${prof.costAccess ? ` · cost ${CU.money(n.ev.ac)} · forecast ${CU.money(n.ev.eac)}` : ''}` : ''}`,
+        'Done this week:', ...(d.done.length ? d.done.map(x => '- ' + x) : ['- nothing finished']), 'Next week:', ...d.next.map(x => '- ' + x),
+        d.decisions.length ? 'Decisions or help needed:\n' + d.decisions.map(x => '- ' + x).join('\n') : ''].filter(Boolean).join('\n');
+    }
+    if (name === 'close_week') {
+      await CU.ensurePlanCosts().catch(() => {}); await ST.loadStatus(plan.id, true);
+      const d = ST.draft(), ok = c => ['green', 'amber', 'red'].includes(c);
+      const choice = { reasons: { ...(args.reasons || {}) }, by: 'assistant' };
+      for (const k of ['overall', 'schedule', 'cost', 'scope']) choice[k] = ok(String(args[k] || '').toLowerCase()) ? String(args[k]).toLowerCase() : d.rag[k];
+      for (const k of ['schedule', 'cost', 'scope']) if (!choice.reasons[k] && d.rag.why[k]) choice.reasons[k] = d.rag.why[k];
+      Object.assign(choice, { done: Array.isArray(args.done) ? args.done.map(String) : d.done, next: Array.isArray(args.next) ? args.next.map(String) : d.next, decisions: Array.isArray(args.decisions) ? args.decisions.map(String) : d.decisions, notes: String(args.notes || '') });
+      const snap = ST.buildSnapshot(d, choice), prev = (S.statusCache.snaps || []).find(x => x.id === snap.id) || null;
+      return {
+        summary: `Close the week (${snap.statusDate}) – ${plan.name}`,
+        detail: [`Overall ${choice.overall}${choice.reasons.overall ? ': ' + choice.reasons.overall : ''}`, `Schedule ${choice.schedule} · cost ${choice.cost} · scope ${choice.scope}`,
+          `Done: ${choice.done.join('; ') || '–'}`, `Next: ${choice.next.join('; ') || '–'}`, choice.decisions.length ? `Decisions: ${choice.decisions.join('; ')}` : '', prev ? '(replaces the status already saved for this date)' : ''].filter(Boolean).join('\n'),
+        apply: async () => {
+          await ST.saveSnapshot(snap);
+          const key = Math.random().toString(36).slice(2);
+          undos.set(key, { kind: 'status', id: plan.id, snapId: snap.id, prev });
+          return { text: `Saved the status of “${plan.name}” for ${snap.statusDate}. The user can send the report from Plan → Status → Report.`, undo: { key, id: plan.id } };
+        },
+      };
+    }
     if (name === 'add_raid_item') {
       const kind = String(args.kind || '').toLowerCase();
       if (!['risk', 'issue', 'action', 'decision'].includes(kind)) return 'Error: kind must be risk, issue, action or decision.';
@@ -212,6 +296,13 @@ export async function run(name, args) {
 /** Undo an applied assistant change: put the plan back as it was (as a new, undoable change). */
 export async function undo(u) {
   const snap = undos.get(u.key);
+  if (snap && snap.kind === 'status') {
+    if (snap.prev) await api(`/api/plans/${snap.id}/status`, { snapshot: snap.prev }, 'PUT');
+    else await api(`/api/plans/${snap.id}/status/remove`, { id: snap.snapId });
+    await ST.loadStatus(snap.id, true).catch(() => {});
+    undos.delete(u.key);
+    return;
+  }
   if (!snap) throw new Error('That change can no longer be undone here (the page was reloaded). Use Undo on the Plan tab or restore the .bak.json in data/plans.');
   if (!S.plan || S.plan.id !== snap.id) await openPlan(snap.id);
   const old = JSON.parse(snap.before);

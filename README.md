@@ -40,6 +40,7 @@ keystone-worklog
 - 🔎 **Find any file by what's inside it.** PDFs, Word, PowerPoint, Excel, saved emails, Python scripts, notebooks and solver files (Abaqus `.inp`/`.msg`/`.dat`/`.sta`) are searched by keywords and by meaning, and results point to the page, slide, sheet or function.
 - 📥 **An inbox that files itself.** Drop files into `Inbox/` and Keystone suggests where each one belongs, from similar files and job names already in your vault. Review the table, click **Move**, undo if needed.
 - 📊 **Plan projects like in MS Project.** A Gantt you can drag, milestones, dependencies and the critical path, who's working on what, baselines, and an issues & risks log. Opens and saves MS Project XML, and shows the hours you've charged on the timesheet against each task.
+- 💵 **Run the project, not just the plan.** Paste or upload the ERP export for the whole team (you pick the columns once), add the charges the ERP leaves out, and get earned value, CPI/SPI, a forecast and the date the money runs out. Close the week for a red/amber/green status report, and see every plan and person on one page.
 - 🤖 **An assistant that works with you.** "Log 8 hours to each project for today." "Push every card without a date to next Friday." "Summarize this note." Every change shows up as a diff to **Apply** or **Reject**, and can be undone.
 - 🔒 **Local-first and private.** Keystone runs on `127.0.0.1`. Use a local model (Ollama, LM Studio, llama.cpp) and nothing leaves your machine. API keys never reach the browser.
 - ⚡ **Fast on big vaults.** Listing never opens files, OneDrive online-only files aren't downloaded, folders can be skipped, documents are read in a separate process, and embedding runs on your GPU (WebGPU) when there is one.
@@ -115,6 +116,25 @@ The **Plan** tab is a project scheduler that works like MS Project: build the sc
 - **`.mpp` files** can be opened directly once [MPXJ and Java are installed](#reading-mpp-files-optional), no admin rights needed. Keystone always exports XML, which MS Project opens directly.
 - **Try it:** the demo includes `demo/Culvert C-12 schedule.xml`.
 
+### 💵 Team costs, earned value and the weekly status report
+The timesheet tracks your hours; the **Costs** view tracks the whole team's. Run your ERP's labor report and **Import from ERP**: drop the Excel or CSV file, or paste the rows. You choose which column is the date worked, the posting date, the person, hours, pay and fringe **once**, and save it as your master layout, so every later import goes straight to the preview. A new export replaces the period it covers (corrections included), and the last import can be undone.
+
+<img src="docs/screenshots/plan-costs.png" alt="Plan, Costs view: cost to date $46,449 (50% of the $156,000 budget used), forecast at completion $124,516, CPI 0.94, SPI 0.77, money runs out not before the finish, and an S-curve of planned value, earned value, actual cost and the forecast against the budget" width="900">
+
+- **People & rates:** one team list for every plan, with each person's ERP aliases and dated pay rates.
+- **Cost models:** the ERP gives pay and fringe; you add what it leaves out (overhead, service charges, $/hour fees, a fee on the total). Each project picks its model, and every number shows its working.
+- **Earned value:** planned cost from people's rates, saved with the baseline. Actual cost goes on the tasks *that person* was scheduled on that day. You get CPI, SPI, the forecast at completion, the date the money runs out, and an S-curve.
+- **Close the week:** red/amber/green suggested from the numbers (a reason is needed to override it), drafted *done* and *next* lists, and a frozen snapshot. The **status report** is written from it as an Obsidian note, an Outlook email draft or a PDF. The **milestone trend** chart shows what's slipping a little each week.
+- **All plans:** every plan's status, finish, cost and next milestone; every milestone on one timeline; each person's load across all plans; and *who's free* for the next job.
+
+| Import from the ERP – columns chosen once, saved as the master layout | Close the week – suggested status, drafted report |
+| --- | --- |
+| <img src="docs/screenshots/erp-import.png" alt="Import from the ERP: the master layout is applied automatically; each Keystone field is mapped to a column of the export with a preview of the rows" width="440"> | <img src="docs/screenshots/close-week.png" alt="Close the week: finish, progress, cost, CPI and SPI; red/amber/green for overall, schedule, cost and scope with reasons; drafted done and next lists" width="440"> |
+| **Status** – milestone trend and history | **All plans** – status, cost and milestones across projects |
+| <img src="docs/screenshots/plan-status.png" alt="Status view: a milestone trend chart with two milestones drifting later each week, and the status history" width="440"> | <img src="docs/screenshots/plan-portfolio.png" alt="All plans: each plan's status, finish against baseline, progress, late tasks, cost against budget and next milestone, and every milestone on one timeline" width="440"> |
+
+Pay data never leaves your computer: rates are in owner-only files, and an AI profile only sees dollar amounts when you turn on **Allow cost data** for it. Pay rates are never sent.
+
 ### 📋 Deliverables, leave and meetings on one calendar
 
 | Kanban board | Calendar |
@@ -152,7 +172,7 @@ keystone-worklog                          # opens http://127.0.0.1:5000 — stop
 **Try it with demo data first** (from a source checkout – a fictional vault with projects, specs, emails and Abaqus jobs, and an inbox to file; your own data is not touched):
 
 ```bash
-python scripts/make_demo.py                     # creates ./demo (also two project plans for the Plan tab)
+python scripts/make_demo.py                     # creates ./demo (also two project plans, team costs and ERP exports for the Plan tab)
 KEYSTONE_DATA_DIR=demo/data python app.py --port 5050
 ```
 
@@ -201,7 +221,7 @@ KEYSTONE_DATA_DIR=demo/data python app.py --port 5050
 
 ### Things to ask the assistant
 
-> *"Log 8 hours to each project for today."* · *"How many hours do I still need this pay period?"* · *"What's overdue on the Board?"* · *"Set a due date of next Friday on every card that has none."* · *"Summarize the note I have open and pull out the action items."* · *"Draft a reply to my oldest follow-up."* · *"How much annual leave will I have on December 31?"* · *"Find the spec that covers elastomeric bearing pads."* · *"Which email from the county mentioned the culvert deadline?"* · *"Why did girder_v3 fail?"* · *"File my inbox."* · *"What's late on the bridge plan and what's driving the finish date?"* · *"What if the load rating takes a week longer?"*
+> *"Log 8 hours to each project for today."* · *"How many hours do I still need this pay period?"* · *"What's overdue on the Board?"* · *"Set a due date of next Friday on every card that has none."* · *"Summarize the note I have open and pull out the action items."* · *"Draft a reply to my oldest follow-up."* · *"How much annual leave will I have on December 31?"* · *"Find the spec that covers elastomeric bearing pads."* · *"Which email from the county mentioned the culvert deadline?"* · *"Why did girder_v3 fail?"* · *"File my inbox."* · *"What's late on the bridge plan and what's driving the finish date?"* · *"What if the load rating takes a week longer?"* · *"Who is burning the bridge budget?"* · *"Who has 40 hours free in the first half of November?"* · *"Draft this week's status for the bridge plan."*
 
 ---
 

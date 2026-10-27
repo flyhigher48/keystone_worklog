@@ -17,7 +17,7 @@ from pathlib import Path
 from flask import Flask, Response, abort, jsonify, request, send_file, send_from_directory, stream_with_context
 from werkzeug.exceptions import HTTPException
 
-from . import __version__, assistant, documents, fsutil, msproject, vault, vector_index
+from . import __version__, assistant, costs, documents, fsutil, msproject, vault, vector_index
 
 BASE = Path(__file__).resolve().parent      # the package: static/ lives here
 PROJECT_ROOT = BASE.parent                   # the repository, when running from a source checkout
@@ -121,12 +121,27 @@ def daily_snapshot(payload):
         shutil.copyfile(DATA_FILE, dest)  # refreshed through the day; yesterday's copy stays as it was
         for old in sorted(BACKUP_DIR.glob("data-*.json"))[:-60]:
             old.unlink(missing_ok=True)
+        backup_costs(today)
         marker = BACKUP_DIR / ".git-day"
         if payload.get("settings", {}).get("dataGit") and (not marker.exists() or marker.read_text() != today) and ensure_data_repo():
             assistant.git_commit(DATA_DIR, ["data.json"], f"Keystone tracker data {today}")
             marker.write_text(today)
     except (OSError, subprocess.SubprocessError):
         pass  # a backup problem must never block saving
+
+
+def backup_costs(today):
+    """People, rates and cost ledgers: one dated folder per day (last 60 kept), next to the data.json backups."""
+    files = ([PEOPLE_FILE] if PEOPLE_FILE.exists() else []) + (sorted(COSTS_DIR.glob("*.json")) if COSTS_DIR.is_dir() else [])
+    if not files:
+        return
+    dest = BACKUP_DIR / f"costs-{today}"
+    dest.mkdir(exist_ok=True)
+    for f in files:
+        shutil.copyfile(f, dest / f.name)
+        os.chmod(dest / f.name, 0o600)
+    for old in sorted(d for d in BACKUP_DIR.glob("costs-*") if d.is_dir())[:-60]:
+        shutil.rmtree(old, ignore_errors=True)
 
 
 def ensure_data_repo():
@@ -757,8 +772,11 @@ def plans_list():
             j = fsutil.read_json(f, default=None) or {}
         except OSError:
             continue
+        snaps = (fsutil.read_json(status_path(f.stem), default={}) or {}).get("snapshots") or []
+        last = max(snaps, key=lambda x: x.get("date") or "", default=None)
         out.append({"id": j.get("id", f.stem), "name": j.get("name", ""), "projectId": j.get("projectId"), "tasks": len(j.get("tasks") or []),
-                    "updated": j.get("updated"), "rev": j.get("rev", 0), "template": bool(j.get("template"))})
+                    "updated": j.get("updated"), "rev": j.get("rev", 0), "template": bool(j.get("template")),
+                    "lastStatus": last and {"date": last.get("date"), "rag": (last.get("rag") or {}).get("overall")}})
     return jsonify(plans=sorted(out, key=lambda x: (x["name"] or "").lower()))
 
 
@@ -801,7 +819,10 @@ def plan_delete(pid):
         abort(404, "Plan not found")
     trash = PLANS_DIR / ".trash"
     trash.mkdir(parents=True, exist_ok=True)
-    fsutil.replace(p, trash / f"{pid}-{time.strftime('%Y%m%d-%H%M%S')}.json")  # never deleted outright
+    stamp = time.strftime('%Y%m%d-%H%M%S')
+    fsutil.replace(p, trash / f"{pid}-{stamp}.json")  # never deleted outright
+    if status_path(pid).exists():
+        fsutil.replace(status_path(pid), trash / f"{pid}-{stamp}.status.json")
     return jsonify(ok=True)
 
 
@@ -821,6 +842,119 @@ def plan_export(pid):
     xml = msproject.to_mspdi(plan)
     name = re.sub(r"[^\w\- .]+", "_", plan.get("name") or "plan").strip() or "plan"
     return Response(xml, mimetype="application/xml", headers={"Content-Disposition": f'attachment; filename="{name}.xml"'})
+
+
+# ---------- status snapshots: data/plans/<id>.status.json ----------
+def status_path(pid):
+    plan_path(pid)  # validates the id
+    return PLANS_DIR / f"{pid}.status.json"
+
+
+@app.get("/api/plans/<pid>/status")
+def plan_status(pid):
+    doc = fsutil.read_json(status_path(pid), default=None) or {}
+    return jsonify(snapshots=doc.get("snapshots") or [])
+
+
+@app.put("/api/plans/<pid>/status")
+def plan_status_save(pid):
+    snap = json_body().get("snapshot")
+    if not isinstance(snap, dict) or not re.match(r"^s_[\w-]{1,40}$", str(snap.get("id") or "")) or not re.match(r"^\d{4}-\d{2}-\d{2}$", str(snap.get("date") or "")):
+        abort(400, "A snapshot needs an id (s_…) and a date")
+    read_plan(pid)
+    with LOCK:
+        doc = fsutil.read_json(status_path(pid), default=None) or {}
+        snaps = [x for x in doc.get("snapshots") or [] if x.get("id") != snap["id"]] + [snap]
+        snaps.sort(key=lambda x: x.get("date") or "")
+        fsutil.write_text(status_path(pid), json.dumps({**doc, "snapshots": snaps}), mode=costs.PRIVATE)
+    return jsonify(ok=True, count=len(snaps))
+
+
+@app.post("/api/plans/<pid>/status/remove")
+def plan_status_remove(pid):
+    """Take a snapshot out of the history (kept in the file's "removed" list – never deleted outright)."""
+    sid = json_body().get("id")
+    with LOCK:
+        doc = fsutil.read_json(status_path(pid), default=None) or {}
+        gone = [x for x in doc.get("snapshots") or [] if x.get("id") == sid]
+        if not gone:
+            abort(404, "No such snapshot")
+        doc["snapshots"] = [x for x in doc.get("snapshots") or [] if x.get("id") != sid]
+        doc["removed"] = (doc.get("removed") or []) + [{**gone[0], "removedAt": time.strftime("%Y-%m-%dT%H:%M:%S")}]
+        fsutil.write_text(status_path(pid), json.dumps(doc), mode=costs.PRIVATE)
+    return jsonify(ok=True)
+
+
+# ---------- people & rates (data/people.json) and the ERP cost ledgers (data/costs/) ----------
+PEOPLE_FILE = DATA_DIR / "people.json"
+COSTS_DIR = DATA_DIR / "costs"
+LEDGERS = costs.Ledgers(COSTS_DIR)
+
+
+@app.get("/api/people")
+def people_get():
+    doc = fsutil.read_json(PEOPLE_FILE, default=None)
+    return jsonify(doc if isinstance(doc, dict) else {"rev": 0, "people": [], "rates": [], "costModels": [], "layouts": []})
+
+
+@app.put("/api/people")
+def people_save():
+    body = json_body()
+    doc = body.get("doc")
+    if not isinstance(doc, dict) or not all(isinstance(doc.get(k, []), list) for k in ("people", "rates", "costModels", "layouts")):
+        abort(400, "Expected people, rates, costModels and layouts lists")
+    with LOCK:
+        cur = fsutil.read_json(PEOPLE_FILE, default=None) or {}
+        if body.get("baseRev") is not None and body["baseRev"] != cur.get("rev", 0):
+            return jsonify(error="People & rates were changed somewhere else (another tab?).", doc=cur), 409
+        if PEOPLE_FILE.exists():
+            shutil.copyfile(PEOPLE_FILE, DATA_DIR / "people.json.bak")
+            os.chmod(DATA_DIR / "people.json.bak", 0o600)
+        doc["rev"] = (cur.get("rev") or 0) + 1
+        fsutil.write_text(PEOPLE_FILE, json.dumps(doc, indent=1), mode=costs.PRIVATE)
+    return jsonify(rev=doc["rev"])
+
+
+def cost_call(fn, *a, **kw):
+    try:
+        return fn(*a, **kw)
+    except costs.CostError as e:
+        abort(400, str(e))
+
+
+@app.post("/api/costs/parse")
+def costs_parse():
+    b = json_body()
+    return jsonify(cost_call(costs.read_table, b.get("filename") or "", b.get("data"), b.get("text"), b.get("sheet")))
+
+
+@app.get("/api/costs")
+def costs_summary():
+    return jsonify(projects=LEDGERS.summary())
+
+
+@app.get("/api/costs/<pid>")
+def costs_get(pid):
+    return jsonify(cost_call(LEDGERS.load, pid))
+
+
+@app.post("/api/costs/import")
+def costs_import():
+    b = json_body()
+    groups = b.get("groups")
+    if not isinstance(groups, list) or not groups:
+        abort(400, "Nothing to import")
+    out = []
+    with LOCK:
+        for g in groups:
+            out.append({"projectId": g.get("projectId"), **cost_call(LEDGERS.import_batch, g.get("projectId"), g.get("covers"), g.get("lines"), b.get("source", ""), b.get("layout", ""))})
+    return jsonify(batches=out)
+
+
+@app.post("/api/costs/<pid>/undo")
+def costs_undo(pid):
+    with LOCK:
+        return jsonify(cost_call(LEDGERS.undo, pid, json_body().get("batch")))
 
 
 @app.post("/api/assistant/undo")

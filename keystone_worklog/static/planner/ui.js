@@ -3,6 +3,9 @@
 import * as E from './engine.js';
 import { Gantt, ganttColors, ROW, HEAD, ZOOMS } from './gantt.js';
 import * as V from './views.js';
+import * as CU from './costui.js';
+import * as ST from './status.js';
+import * as PF from './portfolio.js';
 
 const S = {  // planner state – survives re-renders of the page
   list: null, plan: null, sched: null, sel: new Set(), cursor: null, undo: [], redo: [], dirty: false, saving: null, conflict: null,
@@ -62,6 +65,8 @@ export async function openPlan(id) {
     remember('nwa.plan.open', id);
     try { planName = p.name; } catch {}  // index.html: the assistant's page context
     resched();
+    try { if (await CU.linkPeople(p)) queueSave(); } catch {}  // plan people → the People & rates directory
+    await Promise.all([CU.ensurePlanCosts(), ST.loadStatus(id)]).catch(() => {});
   } catch (e) { toast(e.message); S.plan = null; remember('nwa.plan.open', ''); }
   S.loading = false;
 }
@@ -154,6 +159,8 @@ export function nwaHours() {
 }
 /** Actual hours per task from the timesheet: hours on each day go to the tasks linked to that NWA, split by planned work that day. */
 export function actualHours() {
+  const pc = CU.planCosts();
+  if (pc && pc.led && pc.led.lines.length) return new Map(pc.roll.actualH);  // ERP charges (+ your unposted timesheet hours), per person
   const res = new Map(), byNwa = {};
   if (!S.sched) return res;
   for (const t of S.plan.tasks) if (t.nwa) (byNwa[t.nwa] ||= []).push(t);
@@ -238,6 +245,9 @@ const COLS = [
   { k: 'fvar', t: 'Finish var.', w: 76, opt: true },
   { k: 'planned', t: 'Planned h', w: 72, opt: true },
   { k: 'actual', t: 'Actual h', w: 72, opt: true },
+  { k: 'cost', t: 'Cost', w: 90, opt: true },
+  { k: 'bcost', t: 'Baseline cost', w: 100, opt: true },
+  { k: 'acost', t: 'Actual cost', w: 96, opt: true },
   { k: 'nwa', t: 'NWA', w: 130, opt: true },
   { k: 'deadline', t: 'Deadline', w: 96, opt: true },
   { k: 'constraint', t: 'Constraint', w: 120, opt: true },
@@ -260,6 +270,7 @@ function cellText(c, uid, idx, ids, actual) {
     case 'fvar': { const v = E.variance(S.sched, t, S.baselineN); return v ? E.formatDuration({ minutes: v.finish, format: 'd' }, u) : ''; }
     case 'planned': return String(hrs(plannedMinutes(uid)));
     case 'actual': { const a = actual.get(uid); return a ? String(Math.round(a * 10) / 10) : ''; }
+    case 'cost': case 'bcost': case 'acost': { const pc = CU.planCosts(); if (!pc) return ''; const v = pc.roll[{ cost: 'planned', bcost: 'baseline', acost: 'actual' }[c.k]].get(uid); return v ? CU.money(v) : ''; }
     case 'nwa': { const p = t.nwa && state.projects.find(x => `${x.network.trim()}|${x.activity.trim()}` === t.nwa); return p ? projectLabel(p) : t.nwa ? t.nwa.replace('|', ' / ') : ''; }
     case 'deadline': return t.deadline ? fmtDate(E.toMin(t.deadline)) : '';
     case 'constraint': { const k = (t.constraint || {}).type || 'ASAP'; return k === 'ASAP' ? '' : `${k} ${t.constraint.date ? fmtDate(E.toMin(t.constraint.date), false) : ''}`; }
@@ -494,6 +505,7 @@ export function mount(root) {
   }
   if (S.loading) { root.replaceChildren(h('p', { class: 'hint' }, 'Opening the plan…')); return; }
   const plans = (S.list || []).filter(p => !p.template);
+  if (S.portfolio) { mountPortfolio(root, plans); return; }
   if (!S.plan) {
     root.replaceChildren(h('section', { class: 'card', style: 'text-align:center;padding:40px 18px' },
       h('h2', { style: 'margin:0 0 6px' }, 'Plan a project'),
@@ -509,17 +521,18 @@ export function mount(root) {
     const v = e.target.value;
     if (v === '__new') { e.target.value = p.id; return newPlanDialog(); }
     if (v === '__import') { e.target.value = p.id; return importDialog(); }
+    if (v === '__all') { e.target.value = p.id; return showPortfolio(); }
     await openPlan(v); redraw();
-  } }, plans.map(x => h('option', { value: x.id }, x.name)), h('option', { value: '__new' }, '+ New plan…'), h('option', { value: '__import' }, '↥ Open an MS Project file…'));
+  } }, plans.map(x => h('option', { value: x.id }, x.name)), h('option', { value: '__all' }, '▦ All plans (portfolio)'), h('option', { value: '__new' }, '+ New plan…'), h('option', { value: '__import' }, '↥ Open an MS Project file…'));
   pick.value = p.id;
   const statusIn = h('input', { type: 'date', value: (p.statusDate || '').slice(0, 10), title: 'Status date: progress is measured as of this date',
     onchange: e => change('Set status date', pl => { pl.statusDate = e.target.value ? e.target.value + 'T17:00' : null; }) });
-  const views = [['gantt', 'Gantt'], ['team', 'Team'], ['workload', 'Workload'], ['raid', 'Issues & risks'], ['dashboard', 'Dashboard']];
+  const views = [['gantt', 'Gantt'], ['team', 'Team'], ['workload', 'Workload'], ['costs', 'Costs'], ['raid', 'Issues & risks'], ['status', 'Status'], ['dashboard', 'Dashboard']];
   const tb = h('div', { class: 'pl-top' },
     h('div', { class: 'pl-title' }, pick, proj ? pchip(proj) : null, h('span', { class: 'pl-save', ref: null }, '')),
     h('div', { class: 'seg' }, views.map(([k, l]) => h('button', { class: S.view === k ? 'on' : '', onclick: () => { S.view = k; remember('nwa.plan.view', k); redraw(); } }, l))),
     h('div', { class: 'spacer' }),
-    h('label', { class: 'pl-status', title: 'Status date' }, 'Status date', statusIn),
+    h('label', { class: 'pl-status', title: 'Status date: progress is measured as of this date' }, h('span', { class: 'pl-st-l' }, 'Status date'), statusIn),
     h('button', { class: 'btn ghost', title: 'Undo (Ctrl+Z)', 'aria-label': 'Undo', onclick: undo, disabled: S.undo.length ? false : '' }, '↶'),
     h('button', { class: 'btn ghost', title: 'Redo (Ctrl+Y)', 'aria-label': 'Redo', onclick: redo, disabled: S.redo.length ? false : '' }, '↷'),
     h('button', { class: 'btn', onclick: e => showMenu(e, planMenu()) }, 'Plan ▾'),
@@ -531,12 +544,23 @@ export function mount(root) {
   const errs = S.sched && S.sched.errors.length ? h('div', { class: 'duebar' }, icon('bell'), h('div', { class: 'txt' }, ...S.sched.errors.slice(0, 3).map(e => h('div', {}, `Task ${rowIds().get(e.uid) || '?'}: ${e.text}`)))) : null;
   let body;
   if (S.view === 'gantt') body = ganttView();
+  else if (S.view === 'costs') body = CU.costsView(api_());
+  else if (S.view === 'status') body = ST.statusView(api_());
   else body = V.render(S.view, api_());
   root.replaceChildren(tb, banner || '', errs || '', body);
   paintStatus();
   if (S.view === 'gantt') requestAnimationFrame(layoutGantt);
 }
-function api_() { return { S, E, taskOf, change, redraw, rowIds, resourceOf, assignmentsOf, resourceText, descendants, openIssueTasks, actualHours, plannedMinutes, fmtDate, parseDateInput, openTask, setPct, select: selectAndShow, meUid }; }
+function showPortfolio() { S.portfolio = true; PF.invalidate(); redraw(); }
+function mountPortfolio(root, plans) {
+  PF.setRedraw(redraw);
+  const back = async (id, uid) => { S.portfolio = false; if (!S.plan || S.plan.id !== id) await openPlan(id); if (uid != null) selectAndShow(uid); else redraw(); };
+  const pick = h('select', { class: 'pl-pick', 'aria-label': 'Plan', onchange: e => { if (e.target.value !== '__all') back(e.target.value); } },
+    h('option', { value: '__all' }, '▦ All plans (portfolio)'), plans.map(x => h('option', { value: x.id }, x.name)));
+  root.replaceChildren(h('div', { class: 'pl-top' }, h('div', { class: 'pl-title' }, pick), h('div', { class: 'spacer' }),
+    h('button', { class: 'btn', onclick: () => CU.importDialog({ onDone: () => { PF.invalidate(); redraw(); } }) }, icon('up'), 'Import from ERP…')), PF.view(back));
+}
+function api_() { return { S, E, taskOf, change, redraw, rowIds, resourceOf, assignmentsOf, resourceText, descendants, openIssueTasks, actualHours, plannedMinutes, fmtDate, parseDateInput, openTask, setPct, select: selectAndShow, meUid, costs: CU.planCosts, money: CU.money, linkProject: projectDialog, lastSnap: ST.lastSnap }; }
 function selectAndShow(uid) { S.sel = new Set([uid]); S.view = 'gantt'; remember('nwa.plan.view', 'gantt'); const rows = visibleRows(), i = rows.indexOf(uid); if (i >= 0) S.scrollTop = Math.max(0, i * ROW - 120); const r = S.sched.byUid.get(uid); if (r) S.scrollLeft = null, S.focusTime = r.es; redraw(); }
 
 function planMenu() {
@@ -544,6 +568,7 @@ function planMenu() {
   return [
     { header: p.name },
     { icon: 'plus', label: 'Set baseline…', run: baselineDialog },
+    { icon: 'check', label: 'Close the week…', run: () => ST.closeWeekDialog(api_()) },
     { icon: 'sync', label: 'Update progress to the status date', run: () => {
       if (!p.statusDate) return toast('Set a status date first (top right)');
       change('Update progress to the status date', pl => Object.assign(pl, E.updateToStatus(pl, S.sched)));
@@ -555,6 +580,8 @@ function planMenu() {
     { icon: 'history', label: 'Use my work schedule and holidays as the calendar', run: () => change('Use the Keystone calendar', pl => { pl.calendar = keystoneCalendar(pl.start); pl.calendarSource = 'keystone'; }) },
     { icon: 'template', label: 'Save as a template…', run: saveTemplate },
     { icon: 'down', label: 'Update from an MS Project file…', run: () => importDialog(true) },
+    p.projectId ? { icon: 'up', label: 'Import costs from the ERP…', run: () => CU.importDialog({ projectId: p.projectId, onDone: () => redraw() }) } : null,
+    { icon: 'chart', label: 'All plans (portfolio)', run: showPortfolio },
     '-',
     { icon: 'trash', label: 'Delete this plan…', danger: true, run: async () => {
       if (!confirm(`Delete the plan “${p.name}”? It is moved to data/plans/.trash and can be restored from there.`)) return;
@@ -982,11 +1009,11 @@ function baselineDialog() {
   const dlg = h('dialog', { class: 'dlg', onclose: () => dlg.remove() },
     h('form', { method: 'dialog', onsubmit: e => {
       e.preventDefault();
-      change(`Set baseline ${n.value}`, p => { p.tasks = E.setBaseline(p, S.sched, +n.value).tasks; });
+      change(`Set baseline ${n.value}`, p => { p.tasks = E.setBaseline(p, S.sched, +n.value).tasks; CU.stampBaselineCost(p, S.sched, +n.value); });
       S.baselineN = +show.value; dlg.close(); redraw(); toast(`Baseline ${n.value} saved`);
     } },
       h('h3', {}, 'Baselines'),
-      h('p', { class: 'hint', style: 'margin:0' }, 'A baseline saves every task\'s current start, finish, duration and work, so you can see what slipped later.'),
+      h('p', { class: 'hint', style: 'margin:0' }, 'A baseline saves every task\'s current start, finish, duration, work and planned cost, so you can see what slipped later – and work out earned value.'),
       h('div', {}, h('label', {}, 'Save the current schedule as'), n),
       h('div', {}, h('label', {}, 'Gantt and variance columns use'), show),
       h('div', { class: 'btns' }, h('button', { type: 'button', class: 'btn', style: 'margin-right:auto', onclick: () => { S.baselineN = +show.value; dlg.close(); redraw(); } }, 'Only change the comparison'),
@@ -1122,7 +1149,12 @@ export async function digest() {
   if (digestCache && Date.now() - digestCache.at < 60000) return digestCache.data;
   const list = (await api('/api/plans')).plans.filter(p => !p.template);
   const today = E.toMin(fmt(new Date())), weekEnd = today + 7 * E.DAY, soon = today + 14 * E.DAY;
-  const out = { mine: [], milestones: [], late: [] };
+  const out = { mine: [], milestones: [], late: [], closeWeek: [] };
+  const dow = new Date().getDay();
+  for (const meta of list) {  // Friday (or later in the week) with no status for 5+ days, or any day after 9 days
+    const endOfWeek = dow >= 5 || dow === 0, age = meta.lastStatus ? (E.toMin(fmt(new Date())) - E.toMin(meta.lastStatus.date)) / E.DAY : null;
+    if (age == null ? endOfWeek : endOfWeek ? age >= 5 : age >= 9) out.closeWeek.push({ planId: meta.id, plan: meta.name, last: meta.lastStatus && meta.lastStatus.date });
+  }
   for (const meta of list.slice(0, 12)) {
     const p = S.plan && S.plan.id === meta.id ? S.plan : await api('/api/plans/' + meta.id);
     let s;
@@ -1146,4 +1178,4 @@ export async function show(planId, uid) {
   view.tab = 'plan'; render();
   if (uid != null) setTimeout(() => selectAndShow(uid), 50);
 }
-export { E as engine };
+export { E as engine, CU as costs, ST as status };

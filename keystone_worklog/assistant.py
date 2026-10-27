@@ -40,7 +40,7 @@ class LLMError(Exception):
 # ---------- settings (data/llm.json, never sent to the browser with keys) ----------
 DEFAULTS = {"profiles": [], "active": None, "autoApply": False, "gitCommit": True, "semantic": True, "documents": True, "plainText": True, "maxSteps": 12,
             "indexExclude": [], "maxFileMB": 100, "includeCloud": False, "embedDevice": "auto"}
-PROFILE_KEYS = ("id", "name", "baseUrl", "apiKey", "model", "trackerAccess", "stream", "temperature")
+PROFILE_KEYS = ("id", "name", "baseUrl", "apiKey", "model", "trackerAccess", "costAccess", "stream", "temperature")
 
 
 def load_settings(path):
@@ -92,7 +92,7 @@ def merge_settings(s, incoming):
             elif p.get("apiKey"):
                 key = p["apiKey"].strip()
             profiles.append({"id": pid, "name": (p.get("name") or "Untitled").strip()[:60], "baseUrl": (p.get("baseUrl") or "").strip().rstrip("/"),
-                             "apiKey": key, "model": (p.get("model") or "").strip(), "trackerAccess": bool(p.get("trackerAccess")),
+                             "apiKey": key, "model": (p.get("model") or "").strip(), "trackerAccess": bool(p.get("trackerAccess")), "costAccess": bool(p.get("costAccess")),
                              "stream": p.get("stream", True) is not False, "temperature": p.get("temperature")})
         s["profiles"] = profiles
     if "active" in incoming:
