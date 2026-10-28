@@ -1,7 +1,7 @@
 // Keystone Planner – the assistant's plan tools. Each write tool returns a preview ({ summary, detail, apply });
 // index.html shows it for approval, then calls apply(). Reads and simulate return plain text.
 import * as E from './engine.js';
-import { planner as S, openPlan, change, rowIds, resourceText, moveTo, finishAt, setPct, flush, fmtDate, parseDateInput, descendants } from './ui.js';
+import { planner as S, openPlan, change, rowIds, resourceText, moveTo, finishAt, setPct, setWork, flush, fmtDate, parseDateInput, descendants } from './ui.js';
 import * as CU from './costui.js';
 import * as ST from './status.js';
 import * as PF from './portfolio.js';
@@ -12,10 +12,11 @@ export const TOOLS = {
     p: { plan: ['string', 'Plan id or name (from list_plans); defaults to the open plan'], filter: ['string', 'all (default), critical, late, milestones, incomplete, or a person\'s name'] }, req: [] },
   simulate: { d: 'What-if: apply task changes to a copy of the plan and report how the finish date, critical path and deadlines would move. Nothing is saved.',
     p: { plan: ['string'], changes: { type: 'array', description: 'Same items as update_tasks', items: { type: 'object' } } }, req: ['changes'] },
-  update_tasks: { d: 'Change existing tasks in a plan. Refer to tasks by ID (row number from get_plan) or exact name. Fields: name, duration ("3d", "2w", "0" = milestone), start (YYYY-MM-DD; sets Start No Earlier Than), finish (YYYY-MM-DD; changes the duration), percent (0–100), predecessors (like the grid: "4, 7SS+2d, 9FF-1d"), people ("Maria, Sam[50%]"), notes, deadline (YYYY-MM-DD or empty). The user reviews the schedule impact first.',
+  update_tasks: { d: 'Change existing tasks in a plan. Refer to tasks by ID (row number from get_plan) or exact name. Fields: name, duration ("3d", "2w", "0" = milestone), hours (total work the task needs; the duration follows from the people on it), budget (dollars, a separate check against the cost; "" clears it), start (YYYY-MM-DD; sets Start No Earlier Than), finish (YYYY-MM-DD; changes the duration), percent (0–100), predecessors (like the grid: "4, 7SS+2d, 9FF-1d"), people ("Maria, Sam[50%]"), notes, deadline (YYYY-MM-DD or empty). The user reviews the schedule impact first.',
     p: { plan: ['string'], changes: { type: 'array', items: { type: 'object', required: ['task'], properties: {
       task: { type: 'string', description: 'ID or exact name' }, name: { type: 'string' }, duration: { type: 'string' }, start: { type: 'string' }, finish: { type: 'string' },
-      percent: { type: 'number' }, predecessors: { type: 'string' }, people: { type: 'string' }, notes: { type: 'string' }, deadline: { type: 'string' } } } } }, req: ['changes'] },
+      percent: { type: 'number' }, predecessors: { type: 'string' }, people: { type: 'string' }, notes: { type: 'string' }, deadline: { type: 'string' },
+      hours: { type: 'number', description: 'Total hours of work the task needs' }, budget: { type: ['number', 'string'], description: 'Budget in dollars; "" clears it' } } } } }, req: ['changes'] },
   add_tasks: { d: 'Add tasks or milestones to a plan. parent puts them under a summary task (ID or name); after places them after a task; depends_on lists tasks (IDs or names, including tasks added in the same call) they follow finish-to-start. The user reviews it.',
     p: { plan: ['string'], tasks: { type: 'array', items: { type: 'object', required: ['name'], properties: {
       name: { type: 'string' }, duration: { type: 'string', description: '"5d", "2w"; "0" for a milestone (default 1d)' }, parent: { type: 'string' }, after: { type: 'string' },
@@ -96,6 +97,16 @@ function editTask(t, c) {
   }
   if (c.people != null) { assign(t.uid, String(c.people)); out.push(`people → ${c.people || 'nobody'}`); }
   if (c.notes != null) { t.notes = String(c.notes); out.push('notes'); }
+  if (c.hours != null) {
+    const n = +c.hours;
+    if (!Number.isFinite(n) || n < 0) throw new Error('hours must be a number');
+    if (S.sched.byUid.get(t.uid)?.summary) throw new Error(`“${t.name}” is a summary – give its tasks hours instead`);
+    setWork(t, n * 60); out.push(`${n} h of work`);
+  }
+  if (c.budget != null) {
+    if (c.budget === '') { delete t.budget; out.push('budget cleared'); }
+    else { const n = +String(c.budget).replace(/[$,\s]/g, ''); if (!Number.isFinite(n) || n < 0) throw new Error('budget must be a dollar amount'); t.budget = n; out.push(`budget $${n.toLocaleString()}`); }
+  }
   if (c.deadline != null) { const ds = c.deadline ? parseDateInput(c.deadline) : ''; if (c.deadline && !ds) throw new Error(`“${c.deadline}” is not a date`); t.deadline = ds ? ds + 'T17:00' : null; out.push(`deadline → ${ds || 'none'}`); }
   if (!out.length) throw new Error(`nothing to change on “${t.name}”`);
   return out;
@@ -187,11 +198,14 @@ export async function run(name, args, prof = {}) {
         return f === 'all' || !f ? true : f === 'critical' ? r.critical : f === 'late' ? r.late || r.missesDeadline : f === 'milestones' ? r.milestone : f === 'incomplete' ? r.pct < 100
           : person ? plan.assignments.some(a => a.taskUid === uid && a.resourceUid === person.uid) : true;
       });
+      await CU.ensurePlanCosts().catch(() => {});
+      const chk = (CU.planCosts() || {}).checks;
+      const est = uid => { const x = chk && chk.get(uid); if (!x) return ''; return ` | ${x.baselineH != null ? Math.round(x.baselineH) + ' h baseline, ' : ''}${Math.round(x.plannedH)} h planned, ${Math.round(x.actualH)} h actual, ${Math.round(x.forecastH)} h forecast${x.budget != null ? ` | budget ${prof.costAccess ? CU.money(x.budget) : '(hidden)'}${x.overBudget ? ' HEADING OVER BUDGET' : ''}` : ''}`; };
       const head = `Plan “${plan.name}” (id ${plan.id}) · starts ${fmtDate(s.start)} · finishes ${fmtDate(s.finish)}${plan.statusDate ? ' · status date ' + plan.statusDate.slice(0, 10) : ''} · ${plan.tasks.length} tasks`;
       const lines = rows.slice(0, 400).map(uid => {
         const t = plan.tasks.find(x => x.uid === uid), r = s.byUid.get(uid);
         const flags = [r.summary ? 'summary' : '', r.milestone ? 'milestone' : '', r.critical ? 'critical' : '', r.late ? 'LATE' : '', r.missesDeadline ? 'MISSES DEADLINE' : '', r.conflict ? 'conflict: ' + r.conflict : ''].filter(Boolean).join(', ');
-        return `${ids.get(uid)}. ${'  '.repeat(s.outline.depth.get(uid) || 0)}${t.name} | ${E.dateOf(r.es)} → ${E.dateOf(r.ef)} | ${E.formatDuration(r.summary ? { minutes: r.dur, format: 'd' } : t.duration, u)} | ${r.pct || 0}% | pred: ${E.formatPredecessors(t.links, p => ids.get(p), u) || '-'} | ${resourceText(uid) || '-'} | slack ${E.formatDuration({ minutes: r.totalSlack || 0, format: 'd' }, u)}${t.deadline ? ' | deadline ' + t.deadline.slice(0, 10) : ''}${flags ? ' | ' + flags : ''}`;
+        return `${ids.get(uid)}. ${'  '.repeat(s.outline.depth.get(uid) || 0)}${t.name} | ${E.dateOf(r.es)} → ${E.dateOf(r.ef)} | ${E.formatDuration(r.summary ? { minutes: r.dur, format: 'd' } : t.duration, u)} | ${r.pct || 0}% | pred: ${E.formatPredecessors(t.links, p => ids.get(p), u) || '-'} | ${resourceText(uid) || '-'} | slack ${E.formatDuration({ minutes: r.totalSlack || 0, format: 'd' }, u)}${t.deadline ? ' | deadline ' + t.deadline.slice(0, 10) : ''}${est(uid)}${flags ? ' | ' + flags : ''}`;
       });
       const raid = (plan.raid || []).filter(x => x.status !== 'closed').map(x => `- ${x.kind}: ${x.title}${x.owner ? ' (owner ' + x.owner + ')' : ''}${x.due ? ' due ' + x.due : ''}${x.kind === 'risk' ? ` P${x.probability}×I${x.impact}` : ''}${(x.taskUids || []).length ? ' – tasks ' + x.taskUids.map(t => ids.get(t)).filter(Boolean).join(', ') : ''}`);
       return [head, 'ID. name | start → finish | duration | % | predecessors | people | total slack | flags', ...lines, rows.length > 400 ? `… ${rows.length - 400} more rows` : '',
@@ -246,6 +260,8 @@ export async function run(name, args, prof = {}) {
         `Planned value ${M(ev.pv)} · earned value ${M(ev.ev)} (${Math.round(hv.ev)} h earned of ${Math.round(hv.pv)} h planned by now) · CPI ${ev.cpi != null ? ev.cpi.toFixed(2) : '–'} · SPI ${ev.spi != null ? ev.spi.toFixed(2) : '–'}`,
         `Forecast at completion ${M(ev.eac ?? ev.eacBottomUp)} (if the rest goes to plan: ${M(ev.eacPlan)}; bottom-up: ${M(ev.eacBottomUp)}) · ${pc.runOut != null ? 'money runs out ' + E.dateOf(pc.runOut * E.DAY) : 'the budget lasts to the finish'}`,
         ...pc.warnings.map(w => 'Warning: ' + w.text),
+        ...(() => { const over = [...pc.checks.entries()].filter(([u, x]) => !S.sched.byUid.get(u).summary && (x.overBudget || x.overHours));
+          return over.length ? ['Tasks heading over their budget or hour estimate:', ...over.map(([u, x]) => `- ${plan.tasks.find(t => t.uid === u).name}: ${Math.round(x.forecastH)} h forecast vs ${Math.round(x.plannedH)} h planned${x.baselineH != null ? ` (${Math.round(x.baselineH)} h in the baseline)` : ''}${x.budget != null ? `; forecast ${M(x.budgetForecast)} vs budget ${M(x.budget)}` : ''}`)] : ['No task is heading over its budget or planned hours.']; })(),
         'By person:', ...[...per].sort((a, b) => b[1].c - a[1].c).map(([n, a]) => `- ${n}: ${Math.round(a.h * 10) / 10} h, ${M(a.c)}`),
         'By month:', ...[...months].sort().map(([k, a]) => `- ${k}: ${Math.round(a.h)} h, ${M(a.c)}`)].join('\n');
     }

@@ -4,6 +4,7 @@ import * as E from './engine.js';
 import { Gantt, ganttColors, ROW, HEAD, ZOOMS } from './gantt.js';
 import * as V from './views.js';
 import * as CU from './costui.js';
+import * as C from './costs.js';
 import * as ST from './status.js';
 import * as PF from './portfolio.js';
 
@@ -243,11 +244,16 @@ const COLS = [
   { k: 'slack', t: 'Total slack', w: 78, opt: true },
   { k: 'bfinish', t: 'Baseline finish', w: 104, opt: true },
   { k: 'fvar', t: 'Finish var.', w: 76, opt: true },
-  { k: 'planned', t: 'Planned h', w: 72, opt: true },
+  { k: 'planned', t: 'Planned h', w: 76, opt: true, edit: true },
   { k: 'actual', t: 'Actual h', w: 72, opt: true },
   { k: 'cost', t: 'Cost', w: 90, opt: true },
   { k: 'bcost', t: 'Baseline cost', w: 100, opt: true },
   { k: 'acost', t: 'Actual cost', w: 96, opt: true },
+  { k: 'budget', t: 'Budget $', w: 96, opt: true, edit: true },
+  { k: 'bleft', t: 'Budget left', w: 96, opt: true },
+  { k: 'remh', t: 'Remaining h', w: 86, opt: true },
+  { k: 'fch', t: 'Forecast h', w: 82, opt: true },
+  { k: 'fcc', t: 'Forecast cost', w: 100, opt: true },
   { k: 'nwa', t: 'NWA', w: 130, opt: true },
   { k: 'deadline', t: 'Deadline', w: 96, opt: true },
   { k: 'constraint', t: 'Constraint', w: 120, opt: true },
@@ -270,6 +276,15 @@ function cellText(c, uid, idx, ids, actual) {
     case 'fvar': { const v = E.variance(S.sched, t, S.baselineN); return v ? E.formatDuration({ minutes: v.finish, format: 'd' }, u) : ''; }
     case 'planned': return String(hrs(plannedMinutes(uid)));
     case 'actual': { const a = actual.get(uid); return a ? String(Math.round(a * 10) / 10) : ''; }
+    case 'budget': case 'bleft': case 'remh': case 'fch': case 'fcc': {
+      const x = (CU.planCosts() || {}).checks?.get(uid);
+      if (!x) return c.k === 'budget' && t.budget != null && t.budget !== '' ? CU.money(+t.budget) : '';
+      if (c.k === 'budget') return x.budget != null ? CU.money(x.budget) : '';
+      if (c.k === 'bleft') return x.budgetLeft != null ? CU.money(x.budgetLeft) : '';
+      if (c.k === 'fcc') return x.forecastC ? CU.money(x.forecastC) : '';
+      const v = c.k === 'remh' ? x.remainingH : x.forecastH;
+      return v ? String(Math.round(v * 10) / 10) : '';
+    }
     case 'cost': case 'bcost': case 'acost': { const pc = CU.planCosts(); if (!pc) return ''; const v = pc.roll[{ cost: 'planned', bcost: 'baseline', acost: 'actual' }[c.k]].get(uid); return v ? CU.money(v) : ''; }
     case 'nwa': { const p = t.nwa && state.projects.find(x => `${x.network.trim()}|${x.activity.trim()}` === t.nwa); return p ? projectLabel(p) : t.nwa ? t.nwa.replace('|', ' / ') : ''; }
     case 'deadline': return t.deadline ? fmtDate(E.toMin(t.deadline)) : '';
@@ -314,6 +329,18 @@ function setCell(uid, k, text) {
     if (Number.isNaN(n)) return toast('Type a number from 0 to 100');
     return change('Update progress', () => setPct(t, n));
   }
+  if (k === 'planned') {
+    if (r.summary) return toast('A summary task\'s hours are the sum of its tasks – type hours on the tasks');
+    if (r.milestone) return toast('A milestone has no work');
+    const n = C.parseNumber(v.replace(/\s*h(ours?|rs?)?$/i, ''));
+    if (n == null || n < 0) return toast('Type the hours this task needs, e.g. 120');
+    return change(`Plan ${n} h`, () => setWork(t, n * 60));
+  }
+  if (k === 'budget') {
+    const n = v === '' ? null : C.parseNumber(v);
+    if (v !== '' && (n == null || n < 0)) return toast('Type a dollar amount, e.g. 15000 (or leave it empty)');
+    return change(n == null ? 'Clear the budget' : `Budget ${CU.money(n)}`, () => { if (n == null) delete t.budget; else t.budget = Math.round(n * 100) / 100; });
+  }
   if (k === 'deadline') { const ds = v ? parseDateInput(v) : ''; if (v && !ds) return toast('Type a date'); return change('Set deadline', () => { t.deadline = ds ? ds + 'T17:00' : null; }); }
 }
 function linkChange(fn, label) {  // refuse changes that create a loop
@@ -334,6 +361,14 @@ export function finishAt(t, finishMin) {
   const per = S.plan.units.minutesPerDay;
   t.duration = { minutes: Math.max(0, Math.round(mins / per) * per), format: (t.duration || {}).format || 'd' };
   t.milestone = t.duration.minutes === 0;
+}
+/** Plan a task by its total work: the duration follows from the people on it (effort-driven, fixed units). */
+export function setWork(t, workMinutes) {
+  const as = assignmentsOf(t.uid);
+  as.forEach(a => { delete a.workMinutes; });  // everyone keeps their share; their hours follow the new duration
+  const mins = C.durationForWork(workMinutes, as);
+  t.duration = { minutes: mins, format: (t.duration || {}).format || 'd' };
+  t.milestone = false;
 }
 export function setPct(t, n) {
   const r = S.sched.byUid.get(t.uid);
@@ -750,7 +785,7 @@ function paintGrid() {
         if (t.manual) marks.push(h('span', { class: 'pl-i', title: 'Manually scheduled' }, '✋'));
         return h('div', { class: 'pl-c pl-ind', style: `width:${w}px` }, marks.slice(0, 2));
       }
-      return h('div', { class: 'pl-c' + (['dur', 'pct', 'id', 'slack', 'fvar', 'planned', 'actual'].includes(c.k) ? ' num' : '') + (c.k === 'id' ? ' pl-id' : ''), style: `width:${w}px`, 'data-k': c.k }, cellText(c, uid, ids.get(uid), ids, actual));
+      return h('div', { class: 'pl-c' + (['dur', 'pct', 'id', 'slack', 'fvar', 'planned', 'actual', 'cost', 'bcost', 'acost', 'budget', 'bleft', 'remh', 'fch', 'fcc'].includes(c.k) ? ' num' : '') + (c.k === 'id' ? ' pl-id' : '') + (overCell(c.k, uid) ? ' over' : '') + (c.k === 'budget' && (CU.planCosts() || {}).checks?.get(uid)?.budgetFromTasks ? ' sumof' : ''), style: `width:${w}px`, 'data-k': c.k, title: c.k === 'budget' && (CU.planCosts() || {}).checks?.get(uid)?.budgetFromTasks ? 'The sum of its tasks\' budgets' : null }, cellText(c, uid, ids.get(uid), ids, actual));
     });
     const cls = 'pl-row' + (S.sel.has(uid) ? ' sel' : '') + (r.summary ? ' sum' : '') + (r.critical && !r.summary ? ' crit' : '') + (r.pct >= 100 ? ' done' : '');
     const row = h('div', { class: cls, style: `top:${i * ROW}px`, 'data-uid': uid,
@@ -775,6 +810,13 @@ function paintCursor() {
   const row = gridRows.querySelector(`.pl-row[data-uid="${S.cursor.uid}"]`), cell = row && row.querySelector(`[data-k="${S.cursor.k}"]`);
   if (cell) cell.classList.add('cur');
 }
+/** Red when a task is heading over: its forecast cost passes its budget, or forecast hours pass the estimate. */
+function overCell(k, uid) {
+  if (!['bleft', 'fcc', 'fch', 'budget'].includes(k)) return false;
+  const x = (CU.planCosts() || {}).checks?.get(uid);
+  if (!x) return false;
+  return k === 'fch' ? x.overHours : k === 'bleft' ? x.budgetLeft != null && x.budgetLeft < 0 : x.overBudget;
+}
 function startEdit(uid, k, initial) {
   const col = COLS.find(c => c.k === k);
   if (!col || !col.edit) return;
@@ -783,13 +825,14 @@ function startEdit(uid, k, initial) {
   const row = S.els.gridRows.querySelector(`.pl-row[data-uid="${uid}"]`), cell = row && row.querySelector(`[data-k="${k}"]`);
   if (!cell) return;
   const ids = rowIds(), cur = cellText(col, uid, ids.get(uid), ids, new Map());
-  const inp = h('input', { class: 'pl-edit', value: initial != null ? initial : (k === 'pct' ? cur.replace('%', '') : cur) });
+  const raw = k === 'pct' ? cur.replace('%', '') : k === 'budget' ? String(taskOf(uid).budget ?? '') : cur;
+  const inp = h('input', { class: 'pl-edit', value: initial != null ? initial : raw });
   let done = false;
   const finish = (save, move) => {
     if (done) return; done = true;
     const v = inp.value;
     inp.remove();
-    if (save && v !== cur) setCell(uid, k, v); else paintGrid();
+    if (save && v !== raw) setCell(uid, k, v); else paintGrid();
     if (move) moveCursor(move);
     S.els.grid && S.els.grid.focus({ preventScroll: true });
   };
@@ -896,6 +939,21 @@ export function openTask(uid) {
   const bl = Object.entries(t.baselines || {}).sort((a, b) => a[0] - b[0]);
   const raid = (S.plan.raid || []).filter(x => (x.taskUids || []).includes(uid));
   const actual = actualHours().get(uid);
+  // the estimate: hours per person (typed or from duration × share), a budget, and how it's going
+  const budget = h('input', { type: 'text', inputmode: 'decimal', value: t.budget ?? '', placeholder: r.summary ? 'Optional – otherwise the sum of its tasks' : 'Optional, e.g. 15000' });
+  const pcx = CU.planCosts(), chk = pcx && pcx.checks.get(uid);
+  const workRows = r.summary || r.milestone ? [] : assignmentsOf(uid).map(a => ({ a, res: resourceOf(a.resourceUid), inp: h('input', { type: 'number', min: 0, step: 'any', style: 'width:90px', value: hrs(a.workMinutes ?? r.dur * (a.units ?? 1)) }) }));
+  const estimate = h('div', {},
+    h('label', {}, 'Estimate'),
+    h('div', { class: 'row2' },
+      h('div', {}, h('small', { class: 'hint' }, `Budget (${CU.cur()}) – a separate check next to the cost from people's rates`), budget),
+      workRows.length ? h('div', {}, h('small', { class: 'hint' }, 'Hours each person needs (changing them sets their share of the task)'),
+        h('table', { class: 'rep' }, h('tbody', {}, workRows.map(w => h('tr', {}, h('td', {}, w.res ? w.res.name : '?'), h('td', {}, w.inp, ' h')))))) : h('div', {}, h('small', { class: 'hint' }, r.summary ? 'Hours add up from its tasks.' : r.milestone ? 'A milestone has no work.' : 'Assign people to plan their hours, or type the hours in the Planned h column.'))),
+    chk ? h('table', { class: 'rep est' }, h('thead', {}, h('tr', {}, ['', 'Baseline', 'Planned', 'Actual', 'Forecast', ''].map(x => h('th', {}, x)))), h('tbody', {},
+      h('tr', {}, h('th', {}, 'Hours'), h('td', { class: 'num' }, chk.baselineH != null ? `${hrs(chk.baselineH * 60)} h` : '–'), h('td', { class: 'num' }, `${hrs(chk.plannedH * 60)} h`), h('td', { class: 'num' }, `${hrs(chk.actualH * 60)} h`), h('td', { class: 'num' + (chk.overHours ? ' neg' : '') }, `${hrs(chk.forecastH * 60)} h`), h('td', { class: chk.overHours ? 'neg' : 'hint' }, chk.overHours ? `${hrs((chk.forecastH - chk.plannedH) * 60)} h over the plan` : '')),
+      h('tr', {}, h('th', {}, 'Cost'), h('td', { class: 'num' }, chk.baselineC != null ? CU.money(chk.baselineC) : '–'), h('td', { class: 'num' }, CU.money(chk.plannedC)), h('td', { class: 'num' }, CU.money(chk.actualC)), h('td', { class: 'num' }, CU.money(chk.forecastC)), h('td', {}, '')),
+      chk.budget != null ? h('tr', {}, h('th', {}, 'Budget'), h('td', { class: 'num' }, ''), h('td', { class: 'num' }, CU.money(chk.budget)), h('td', { class: 'num' + (chk.budgetLeft < 0 ? ' neg' : '') }, `${CU.money(chk.budgetLeft)} left`), h('td', { class: 'num' + (chk.overBudget ? ' neg' : '') }, CU.money(chk.budgetForecast)), h('td', { class: chk.overBudget ? 'neg' : 'pos' }, chk.overBudget ? `heading ${CU.money(chk.budgetForecast - chk.budget)} over` : 'within budget')) : null)) : null,
+    h('small', { class: 'hint' }, `Baseline = the original estimate${(t.baselines || {})[S.baselineN] ? '' : ' (none yet: Plan ▾ → Set baseline)'}; Planned = now. Forecast = actual + planned × the part not done yet.`));
   const dlg = h('dialog', { class: 'dlg wide', onclose: () => dlg.remove() },
     h('form', { method: 'dialog', onsubmit: e => {
       e.preventDefault();
@@ -905,6 +963,8 @@ export function openTask(uid) {
       if (!pl) return toast('Predecessors look like 4, 7SS+2d');
       const byId = new Map([...ids].map(([u2, i]) => [i, u2]));
       if (pl.some(l => !byId.has(l.id) || byId.get(l.id) === uid)) return toast('A predecessor number doesn\'t match a task');
+      const bud = budget.value.trim() === '' ? null : C.parseNumber(budget.value);
+      if (budget.value.trim() !== '' && (bud == null || bud < 0)) return toast('The budget should be a dollar amount, e.g. 15000');
       const before = JSON.stringify(S.plan);
       change('Edit task', () => {
         t.name = name.value.trim();
@@ -919,6 +979,14 @@ export function openTask(uid) {
         t.files = files.value.split(',').map(s => s.trim()).filter(Boolean);
         t.links = pl.map(l => ({ pred: byId.get(l.id), type: l.type, lag: l.lag }));
         assignFromText(uid, res.value);
+        if (bud == null) delete t.budget; else t.budget = Math.round(bud * 100) / 100;
+        const dm = t.duration ? t.duration.minutes : 0;  // hours typed per person → their share of the task
+        for (const w of workRows) {
+          const typed = +w.inp.value, a = S.plan.assignments.find(x => x.taskUid === uid && x.resourceUid === w.a.resourceUid);
+          if (!a || !Number.isFinite(typed) || Math.abs(typed - hrs(w.a.workMinutes ?? r.dur * (w.a.units ?? 1))) < 0.05) continue;
+          a.workMinutes = Math.round(typed * 60);
+          if (dm > 0) a.units = Math.round(a.workMinutes / dm * 1000) / 1000;
+        }
       }, { quiet: true });
       const loop = S.sched.errors.find(x => /circular|own subtask/.test(x.text));
       if (loop) { restore(before); S.undo.pop(); return toast('That would make a loop: ' + loop.text); }
@@ -936,6 +1004,7 @@ export function openTask(uid) {
       h('div', { class: 'row2' }, h('div', {}, h('label', {}, 'Charges to (timesheet NWA)'), nwa,
         h('small', { class: 'hint' }, actual ? `${Math.round(actual * 10) / 10} h charged so far · ${hrs(plannedMinutes(uid))} h planned` : `${hrs(plannedMinutes(uid))} h planned`)),
         h('div', {}, h('label', {}, 'Files in the vault'), files)),
+      estimate,
       h('div', {}, h('label', {}, 'Notes'), notes),
       bl.length ? h('div', {}, h('label', {}, 'Baselines'), h('table', { class: 'rep' }, h('tbody', {}, bl.map(([n, b]) => h('tr', {}, h('td', {}, `Baseline ${n}`), h('td', {}, b.start ? fmtDate(E.toMin(b.start)) : ''), h('td', {}, b.finish ? fmtDate(E.toMin(b.finish)) : ''), h('td', {}, E.formatDuration({ minutes: b.minutes || 0, format: 'd' }, u))))))) : '',
       Object.keys(t.custom || {}).length ? h('div', {}, h('label', {}, 'Custom fields (from MS Project)'), h('div', { class: 'hint' }, Object.entries(t.custom).map(([k, val]) => `${k}: ${val}`).join(' · '))) : '',

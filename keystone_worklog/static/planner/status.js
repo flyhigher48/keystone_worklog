@@ -36,9 +36,10 @@ export function currentNumbers() {
   const pc = planCosts(), ev = pc && (pc.ev.bac || pc.actual.total) ? {
     bac: round(pc.ev.bac), pv: round(pc.ev.pv), ev: round(pc.ev.ev), ac: round(pc.ev.ac), spi: r2(pc.ev.spi), cpi: r2(pc.ev.cpi), eac: round(pc.ev.eac ?? pc.ev.eacBottomUp),
     evH: round(pc.evH.ev), acH: round(pc.evH.ac), budget: pc.budget || null, projectTotal: round(pc.projectTotal), runOut: pc.runOut != null ? E.dateOf(pc.runOut * E.DAY) : null } : null;
+  const overBudget = pc ? [...pc.checks.entries()].filter(([u, x]) => !s.byUid.get(u).summary && x.overBudget).map(([u, x]) => ({ name: taskOf(u).name, budget: round(x.budget), forecast: round(x.budgetForecast) })) : [];
   const raid = (p.raid || []).filter(x => x.status !== 'closed').map(x => ({ id: x.id, kind: x.kind, title: x.title, score: (x.probability || 0) * (x.impact || 0), owner: x.owner || '', due: x.due || '' }));
   return { statusDate: E.dateOf(statusMin), statusMin, finish: E.dateOf(s.finish), baselineFinish: blFinish && blFinish.slice(0, 10), pct, pctExpected: expected, milestones, tasks, ev,
-    postedThrough: pc ? pc.posted : null, raid, openRisks: raid.filter(x => x.kind === 'risk').length, openIssues: raid.filter(x => x.kind === 'issue').length };
+    postedThrough: pc ? pc.posted : null, raid, overBudget, openRisks: raid.filter(x => x.kind === 'risk').length, openIssues: raid.filter(x => x.kind === 'issue').length };
 }
 const round = n => n == null || !Number.isFinite(n) ? null : Math.round(n);
 const r2 = n => n == null || !Number.isFinite(n) ? null : Math.round(n * 100) / 100;
@@ -75,7 +76,7 @@ export async function saveSnapshot(snap) {
 export function buildSnapshot(d, choice) {
   const { n } = d;
   return { id: 's_' + n.statusDate, date: fmt(new Date()), statusDate: n.statusDate, rag: { overall: choice.overall, schedule: choice.schedule, cost: choice.cost, scope: choice.scope, reasons: choice.reasons },
-    finish: n.finish, baselineFinish: n.baselineFinish, pct: n.pct, pctExpected: n.pctExpected, milestones: n.milestones, tasks: n.tasks, ev: n.ev, postedThrough: n.postedThrough,
+    finish: n.finish, baselineFinish: n.baselineFinish, pct: n.pct, pctExpected: n.pctExpected, milestones: n.milestones, tasks: n.tasks, ev: n.ev, postedThrough: n.postedThrough, overBudget: n.overBudget,
     raid: n.raid, openRisks: n.openRisks, openIssues: n.openIssues, done: choice.done, next: choice.next, decisions: choice.decisions, notes: choice.notes || '', by: choice.by || 'you' };
 }
 
@@ -168,6 +169,7 @@ export function reportMarkdown(snap) {
   if (ev) md.push('## Budget', '', '| Budget | Cost to date | Earned value | Planned value | CPI | SPI | Forecast at completion |', '| --- | --- | --- | --- | --- | --- | --- |',
     `| ${ev.budget ? money(ev.budget) : money(ev.bac)} | ${money(ev.ac)} | ${money(ev.ev)} | ${money(ev.pv)} | ${ev.cpi ?? '–'} | ${ev.spi ?? '–'} | ${money(ev.eac)} |`, '',
     ev.runOut ? `At this rate the budget runs out on ${ev.runOut}.` : '', '');
+  if ((snap.overBudget || []).length) md.push('Tasks heading over their budget:', '', ...snap.overBudget.map(x => `- ${x.name}: forecast ${money(x.forecast)} against a ${money(x.budget)} budget`), '');
   const risks = (snap.raid || []).filter(x => x.kind === 'risk' || x.kind === 'issue').sort((a, b) => b.score - a.score);
   if (risks.length) { md.push('## Risks and issues', '', '| | Title | Owner | Due |', '| --- | --- | --- | --- |'); for (const x of risks) md.push(`| ${x.kind}${x.kind === 'risk' ? ` (${x.score})` : ''} | ${x.title.replace(/\|/g, '\\|')} | ${x.owner} | ${x.due} |`); md.push(''); }
   if ((snap.decisions || []).length) md.push('## Decisions or help needed', '', ...snap.decisions.map(x => '- ' + x), '');
@@ -191,6 +193,7 @@ export function reportHtml(snap) {
 ${trendSvg(snap ? snaps().filter(x => x.date <= snap.date) : snaps(), { width: 760, inline: true })}
 <h3>Done this week</h3>${list(snap.done)}<h3>Next week</h3>${list(snap.next)}
 ${ev ? `<h3>Budget</h3><table style="border-collapse:collapse">${th(['Budget', 'Cost to date', 'Earned value', 'Planned value', 'CPI', 'SPI', 'Forecast'])}${tr([money(ev.budget || ev.bac), money(ev.ac), money(ev.ev), money(ev.pv), ev.cpi ?? '–', ev.spi ?? '–', money(ev.eac)])}</table>${ev.runOut ? `<p>At this rate the budget runs out on ${ev.runOut}.</p>` : ''}` : ''}
+${(snap.overBudget || []).length ? `<p><b>Tasks heading over their budget:</b> ${snap.overBudget.map(x => `${esc(x.name)} (forecast ${money(x.forecast)} against ${money(x.budget)})`).join('; ')}</p>` : ''}
 ${risks.length ? `<h3>Risks and issues</h3><table style="border-collapse:collapse">${th(['', 'Title', 'Owner', 'Due'])}${risks.map(x => tr([x.kind + (x.kind === 'risk' ? ` (${x.score})` : ''), esc(x.title), esc(x.owner), x.due])).join('')}</table>` : ''}
 ${(snap.decisions || []).length ? `<h3>Decisions or help needed</h3>${list(snap.decisions)}` : ''}${snap.notes ? `<h3>Notes</h3><p>${esc(snap.notes)}</p>` : ''}
 <p style="color:#6c7689;font-size:12px">Written by Keystone from the status snapshot of ${snap.date}.</p></div>`;

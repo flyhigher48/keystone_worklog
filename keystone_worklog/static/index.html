@@ -642,6 +642,7 @@ table.pr input,table.pr select{min-width:0;width:100%} .card.model{background:va
 .card.model .actions{align-items:center;flex-wrap:wrap} .card.model .actions label{display:inline-flex;align-items:center;gap:6px;margin:0;font-weight:500}
 @media (max-width:760px){.card.model .row3{grid-template-columns:1fr}}
 #people-rates{scroll-margin-top:72px}
+.pl-c.over{color:var(--bad);font-weight:650} .sumof{font-style:italic;opacity:.8} table.cost-tasks th.grp{text-align:center;border-bottom:1px solid var(--line)} table.rep.est{margin-top:8px}
 table.pf tr.pf-row{cursor:pointer} table.pf tr.pf-row:hover td{background:var(--accent-soft)}
 svg.pf-ms{width:100%;height:auto;display:block} svg.pf-ms .grid{stroke:var(--line2)} svg.pf-ms .ax{fill:var(--muted);font-size:11px} svg.pf-ms .pl{fill:var(--ink2);font-size:12px;font-weight:600}
 svg.pf-ms .lane{stroke:var(--line)} svg.pf-ms .today{stroke:var(--accent);stroke-dasharray:3 3} svg.pf-ms .busy{fill:var(--warn-soft)}
@@ -4687,6 +4688,8 @@ function embedWorker() {
     if (!w) return;
     Emb.waits.delete(m.id);
     if (m.device) Object.assign(Emb, { device: m.device, threads: m.threads || 1, note: m.note || '' });
+    else if (m.note) Emb.note = m.note;
+    if (m.gpuFailed) remember('nwa.emb.gpuBad', String(Date.now()));  // this browser's GPU path is broken: start on the CPU for a week
     m.error ? w.reject(new Error(m.error)) : w.resolve(m.vectors);
   };
   Emb.worker.onerror = e => {
@@ -4702,8 +4705,30 @@ function embed(texts) {
     if (Emb.waits.size || A.idx.running) { Emb.idle = setTimeout(idle, 60000); return; }
     if (Emb.worker) { Emb.worker.terminate(); Emb.worker = null; }
   }, 5 * 60000);
-  const prefer = (A.settings && A.settings.embedDevice) || 'auto';
-  return new Promise((resolve, reject) => { Emb.waits.set(id, { resolve, reject }); w.postMessage({ id, texts, prefer }); });
+  return new Promise((resolve, reject) => { Emb.waits.set(id, { resolve, reject }); w.postMessage({ id, texts, prefer: embPrefer() }); });
+}
+/** 'cpu' when chosen in Settings, after the GPU failed in this browser in the last week, or after a GPU timeout. */
+function embPrefer() {
+  const set = (A.settings && A.settings.embedDevice) || 'auto';
+  if (set === 'cpu' || Emb.forceCpu) return 'cpu';
+  const bad = +recall('nwa.emb.gpuBad') || 0;
+  return Date.now() - bad < 7 * 86400000 ? 'cpu' : 'auto';
+}
+/** embed() for indexing: never waits forever. The first call may download the model; a stuck GPU is abandoned for the CPU. */
+async function embedForIndex(texts) {
+  const limit = Emb.device ? 3 * 60000 : 15 * 60000;
+  const timed = () => Promise.race([embed(texts), new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error('timeout'), { timeout: true })), limit))]);
+  try { return await timed(); }
+  catch (e) {
+    if (!e.timeout || embPrefer() === 'cpu') throw e.timeout ? new Error('The embedding model stopped answering – try again, or restart the browser') : e;
+    // the GPU (or loading the GPU model) hung: start a fresh worker on the CPU and redo this batch
+    Emb.forceCpu = true; remember('nwa.emb.gpuBad', String(Date.now()));
+    Emb.note = 'The GPU stopped answering – switched to the CPU';
+    if (Emb.worker) { Emb.worker.terminate(); Emb.worker = null; }
+    for (const w of Emb.waits.values()) w.reject(new Error('restarted on the CPU'));
+    Emb.waits.clear(); Emb.device = '';
+    return await timed();
+  }
 }
 async function embedQuery(q) {
   try { return (await Promise.race([embed([q]), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 90000))]))[0]; }
@@ -4744,7 +4769,7 @@ async function indexVault() {
         A.idx.current = { path: f.path, done: 0, total: f.chunks.length }; setIdxNote();
         for (let i = 0; i < f.chunks.length;) {
           const n = embBatch();
-          vecs.push(...await embed(f.chunks.slice(i, i + n).map(c => c.embed)));
+          vecs.push(...await embedForIndex(f.chunks.slice(i, i + n).map(c => c.embed)));
           A.idx.run.chunks += Math.min(n, f.chunks.length - i); i += n;
           A.idx.current.done = vecs.length;
           if (f.chunks.length > 32) setIdxNote();
@@ -4873,7 +4898,7 @@ function drawIndexCard() {
         h('div', {}, h('button', { class: 'btn', style: 'margin-top:6px', onclick: () => opt('indexExclude', exclude.value) }, 'Save'))),
       h('div', {},
         h('label', {}, 'Embedding runs on'),
-        (() => { const sel = h('select', { onchange: e => { opt('embedDevice', e.target.value); if (Emb.worker) { Emb.worker.terminate(); Emb.worker = null; Emb.device = ''; } } },
+        (() => { const sel = h('select', { onchange: e => { opt('embedDevice', e.target.value); if (e.target.value === 'auto') { remember('nwa.emb.gpuBad', ''); Emb.forceCpu = false; Emb.note = ''; } if (Emb.worker) { Emb.worker.terminate(); Emb.worker = null; Emb.device = ''; } } },
           h('option', { value: 'auto' }, 'GPU when available, else CPU'), h('option', { value: 'cpu' }, 'CPU only')); sel.value = s.embedDevice || 'auto'; return sel; })(),
         h('small', {}, Emb.device ? `Now: ${embDeviceLabel()}${Emb.note ? ' · ' + Emb.note : ''}.` : 'Shown once the model has loaded.', ' The GPU (WebGPU in Edge or Chrome) is usually 5–20× faster on a big vault.'),
         h('label', { style: 'margin-top:10px' }, 'Largest file to index (MB)'),

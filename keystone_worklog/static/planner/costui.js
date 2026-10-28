@@ -119,6 +119,7 @@ export function planCosts() {
   const data = {
     proj, led, model, ctx, planned, actual, ev, evH, budget, posted, workThrough, before, beforeCost, projectTotal, unposted, statusMin, statusDay, warnings,
     runOut: budget ? C.runOut(budget, projectTotal, planned.byDay, statusDay) : C.runOut(ev.bac, actual.total, planned.byDay, statusDay),
+    checks: C.taskChecks(p, S.sched, planned, actual.byTask, S.baselineN),
     roll: {
       planned: C.rollup(p, S.sched, planned.byTask), plannedH: C.rollup(p, S.sched, planned.hoursByTask),
       actual: C.rollup(p, S.sched, actual.byTask, v => v.cost), actualH: C.rollup(p, S.sched, actual.byTask, v => v.hours),
@@ -209,12 +210,21 @@ export function costsView(A) {
   // by task
   const ids = rowIds();
   const taskRows = S.sched.order.slice(0, 300).map(u => {
-    const t = taskOf(u), r = S.sched.byUid.get(u), b = pc.roll.baseline.get(u) || 0, a = pc.roll.actual.get(u) || 0, pl = pc.roll.planned.get(u) || 0;
-    const evT = r.summary ? null : b * (r.pct || 0) / 100;
-    return h('tr', { class: r.summary ? 'sum' : '', ondblclick: () => A.select(u) }, h('td', {}, String(ids.get(u))), h('td', { style: `padding-left:${8 + (S.sched.outline.depth.get(u) || 0) * 14}px` }, t.name),
-      h('td', { class: 'num' }, `${r.pct || 0}%`), h('td', { class: 'num' }, b ? money(b) : ''), h('td', { class: 'num' }, money(pl)), h('td', { class: 'num' }, a ? money(a) : ''),
-      h('td', { class: 'num ' + (evT != null && a > evT * 1.05 && a - evT > 50 ? 'neg' : '') }, evT != null && (a || evT) ? money(evT - a) : ''));
+    const t = taskOf(u), r = S.sched.byUid.get(u), x = pc.checks.get(u) || {};
+    if (r.milestone) return null;
+    const cell = (v, cls = '') => h('td', { class: 'num ' + cls }, v);
+    const h1 = v => v ? `${Math.round(v * 10) / 10}` : '';
+    return h('tr', { class: r.summary ? 'sum' : '', ondblclick: () => A.select(u), title: 'Double-click to find it in the Gantt; open Task details to set hours and a budget' },
+      h('td', {}, String(ids.get(u))), h('td', { style: `padding-left:${8 + (S.sched.outline.depth.get(u) || 0) * 14}px` }, t.name), cell(`${r.pct || 0}%`),
+      cell(x.baselineH != null ? h1(x.baselineH) : ''), cell(h1(x.plannedH)), cell(h1(x.actualH)), cell(h1(x.forecastH), x.overHours ? 'neg' : ''),
+      cell(x.baselineC != null ? money(x.baselineC) : ''), cell(x.plannedC ? money(x.plannedC) : ''), cell(x.actualC ? money(x.actualC) : ''), cell(x.forecastC ? money(x.forecastC) : ''),
+      cell(x.budget != null ? h('span', { class: x.budgetFromTasks ? 'sumof' : '', title: x.budgetFromTasks ? 'The sum of its tasks\' budgets' : '' }, money(x.budget)) : ''),
+      cell(x.budgetForecast != null ? money(x.budgetForecast) : '', x.overBudget ? 'neg' : ''), cell(x.budgetLeft != null ? money(x.budgetLeft) : '', x.budgetLeft != null && x.budgetLeft < 0 ? 'neg' : ''));
   });
+  const leafChecks = [...pc.checks.entries()].filter(([u]) => !S.sched.byUid.get(u).summary);
+  const budgeted = leafChecks.filter(([, x]) => x.budget != null), heading = budgeted.filter(([, x]) => x.overBudget).sort((a, b) => (b[1].budgetForecast - b[1].budget) - (a[1].budgetForecast - a[1].budget));
+  const taskBudgetLine = budgeted.length ? h('p', { class: 'hint', style: 'margin:0 0 8px' }, `Task budgets: ${money(budgeted.reduce((t, [, x]) => t + x.budget, 0))} on ${budgeted.length} task${budgeted.length > 1 ? 's' : ''}, forecast ${money(budgeted.reduce((t, [, x]) => t + x.budgetForecast, 0))}. `,
+    heading.length ? h('span', { class: 'neg' }, `Heading over: ${heading.slice(0, 4).map(([u, x]) => `${taskOf(u).name} (+${money(x.budgetForecast - x.budget)})`).join(', ')}.`) : h('span', { class: 'pos' }, 'All within budget.')) : null;
   const un = pc.actual.unassigned;
   const lineRow = x => h('tr', {}, h('td', {}, x.line.date), h('td', {}, x.person ? x.person.name : x.line.name || ''), h('td', { class: 'num' }, x.line.hours != null ? hrsTxt(x.line.hours) : ''), h('td', { class: 'num' }, money(x.cost)), h('td', {}, x.line.category || x.line.desc || ''));
   return h('section', { class: 'pl-view' }, ...bars,
@@ -223,8 +233,12 @@ export function costsView(A) {
     h('div', { class: 'grid2' },
       h('div', { class: 'card' }, h('h3', {}, 'By person'), h('div', { class: 'tablewrap' }, h('table', { class: 'rep' }, h('thead', {}, h('tr', {}, ['Person', 'Hours', 'Cost', 'Share', 'Still to come'].map(x => h('th', {}, x)))), h('tbody', {}, personRows.length ? personRows : h('tr', {}, h('td', { colspan: 5, class: 'hint' }, 'No charges yet.')))))),
       h('div', { class: 'card' }, h('h3', {}, 'By month'), h('div', { class: 'tablewrap' }, h('table', { class: 'rep' }, h('thead', {}, h('tr', {}, ['Month', 'Planned', 'Actual', 'Hours', 'Non-labor'].map(x => h('th', {}, x)))), h('tbody', {}, monthRows))))),
-    h('div', { class: 'card' }, h('h3', {}, 'By task'), h('p', { class: 'hint', style: 'margin-top:0' }, `Cost variance = earned value (baseline cost × % complete) − actual cost. Negative means the work cost more than planned.`),
-      h('div', { class: 'tablewrap' }, h('table', { class: 'rep cost-tasks' }, h('thead', {}, h('tr', {}, ['ID', 'Task', '%', 'Baseline', 'Planned', 'Actual', 'Cost variance'].map(x => h('th', {}, x)))), h('tbody', {}, taskRows)))),
+    h('div', { class: 'card' }, h('h3', {}, 'By task: estimate, actual and forecast'),
+      h('p', { class: 'hint', style: 'margin-top:0' }, `Baseline = the original estimate (baseline ${S.baselineN}); Planned = the current one. Forecast = actual + planned × the part not done yet, so keep % complete up to date. Red: the forecast passes the planned hours, or the forecast of what a budget covers passes it. Type a task's hours in the Planned h column and its budget in the Budget $ column (Columns ▾), or in Task details.`),
+      taskBudgetLine,
+      h('div', { class: 'tablewrap' }, h('table', { class: 'rep cost-tasks' },
+        h('thead', {}, h('tr', {}, h('th', { colspan: 3 }), h('th', { colspan: 4, class: 'grp' }, 'Hours'), h('th', { colspan: 4, class: 'grp' }, 'Cost (from rates)'), h('th', { colspan: 3, class: 'grp' }, 'Budget (your check)')),
+          h('tr', {}, ['ID', 'Task', '%', 'Baseline', 'Planned', 'Actual', 'Forecast', 'Baseline', 'Planned', 'Actual', 'Forecast', 'Budget', 'Forecast', 'Left'].map(x => h('th', {}, x)))), h('tbody', {}, taskRows)))),
     un.length ? h('div', { class: 'card' }, h('h3', {}, `Not assigned to a task (${un.length})`),
       h('p', { class: 'hint', style: 'margin-top:0' }, 'Charges on days when that person wasn\'t scheduled on this plan. They count in the totals. Map an ERP task code to a task in Task details, or adjust who is assigned.'),
       h('div', { class: 'tablewrap' }, h('table', { class: 'rep' }, h('thead', {}, h('tr', {}, ['Date', 'Person', 'Hours', 'Cost', 'Category'].map(x => h('th', {}, x)))), h('tbody', {}, un.slice(0, 50).map(lineRow))))) : null,

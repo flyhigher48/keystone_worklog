@@ -69,6 +69,19 @@ class IndexTest(unittest.TestCase):
         r = self.c.post("/api/index/upsert", json={"model": "m1", "path": "Ideas/Recipes.md", "mtime": "1", "chunks": [{"text": "x", "vector": [0.1, 0.2]}]})
         self.assertEqual(r.status_code, 400)
 
+    def test_invalid_numbers_are_refused_and_keep_the_old_entries(self):
+        """A GPU that returns NaN (some Linux WebGPU drivers) must not crash the server or wipe what was indexed."""
+        j = self.c.post("/api/index/next", json={"model": "m1", "limit": 1}).get_json()
+        f = j["files"][0]
+        good = [{**c, "vector": fake_vector(c["embed"])} for c in f["chunks"]]
+        self.assertEqual(self.c.post("/api/index/upsert", json={"model": "m1", "path": f["path"], "mtime": f["mtime"], "chunks": good}).status_code, 200)
+        bad = [{**c, "vector": [None] * vi.DIM} for c in f["chunks"]]  # NaN arrives as null in JSON
+        r = self.c.post("/api/index/upsert", json={"model": "m1", "path": f["path"], "mtime": f["mtime"], "chunks": bad})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("invalid numbers", r.get_json()["error"])
+        hits = self.env.app.INDEX.search(self.env.app.vault_root(), good[0]["vector"], 3)
+        self.assertTrue(any(h["path"] == f["path"] for h in hits))  # the earlier vectors are still there
+
 
 if __name__ == "__main__":
     unittest.main()

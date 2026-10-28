@@ -220,7 +220,7 @@ Plans are separate from the Board: the Board holds the cards you're working on n
 - **Link the selected tasks** in order with the link button or `Ctrl+F2` (select with `Ctrl`/`Shift`+click).
 - **On the Gantt:** drag a bar to move it (sets *Start No Earlier Than*), drag its right edge to change the duration, drag the handle inside it to set % complete, or drag from one bar onto another to link them (finish-to-start). The whole schedule moves live while you drag. `Esc` cancels. Double-click a bar for **Task details**; right-click for more.
 - **Zoom** with Day / Week / Month / Quarter / Year or `Ctrl`+mouse wheel. **Fit** shows the whole plan; **Today** scrolls to today. `Shift`+wheel scrolls sideways.
-- **Filters:** critical, late or slipping, milestones, incomplete, my tasks, and tasks with open issues. **Columns** adds WBS, total slack, baseline finish, finish variance, planned and actual hours, NWA, deadline and constraint.
+- **Filters:** critical, late or slipping, milestones, incomplete, my tasks, and tasks with open issues. **Columns** adds WBS, total slack, baseline finish, finish variance, planned and actual hours, cost, baseline and actual cost, budget, budget left, remaining and forecast hours, forecast cost, NWA, deadline and constraint.
 - The **milestone strip** above the chart shows every milestone; click one to jump to it.
 - **Undo / Redo:** `Ctrl+Z` / `Ctrl+Y`, the arrows at the top. Changes save on their own. If the same plan was changed in another tab, a banner lets you load their version or keep yours.
 
@@ -409,6 +409,26 @@ Run your ERP's labor report for the projects, then **Plan → Costs → Import f
 - A baseline set before costs were tracked has no costs: a banner offers **Add costs to baseline N** (today's rates, each task's planned hours).
 - The **grid** has optional *Cost*, *Baseline cost* and *Actual cost* columns (**Columns ▾**), *Actual h* uses ERP hours when the project has them, and the **Dashboard** shows *Cost to date* and *Forecast cost* with CPI and SPI.
 
+### Estimating a task: hours and a budget
+
+Each task can carry two estimates, and both are compared with what it actually took:
+
+- **Hours.** Show the **Planned h** column (**Columns ▾**) and type the hours the task needs, e.g. `120`. The duration follows from the people on it, like MS Project's *Work* with fixed units: 120 h with Maria full-time and Priya half-time takes 120 ÷ 1.5 = 80 working hours = 10 days. With nobody assigned, the hours are the duration. In **Task details → Estimate**, set the hours **per person** instead (e.g. Priya 20 h instead of 12): that sets their share of the task.
+- **Budget ($).** Show the **Budget $** column and type a dollar amount, or use **Task details → Estimate → Budget**. The budget is **your separate check**: it sits next to the cost Keystone works out from people's rates and never replaces it. A summary task's budget is its own when you type one, otherwise the sum of its tasks' budgets (shown in italics) – and then it's compared only with the tasks that have a budget.
+
+How it's compared:
+
+| | Hours | Cost |
+| --- | --- | --- |
+| **Baseline** | the original estimate, saved with **Set baseline** | the cost at the original estimate |
+| **Planned** | the current estimate (what you typed, or duration × people) | planned hours × people's full rates |
+| **Actual** | hours charged (ERP, and your timesheet) | full cost of those charges |
+| **Forecast** | actual + planned × the part not done yet | the same, in dollars |
+
+A task turns **red** when its forecast hours pass the planned hours, or when the forecast of what a budget covers passes the budget. **Budget left** is the budget minus what's been spent. Because the forecast uses **% complete**, keep it up to date: a task with hours charged but still at 0% forecasts all its planned hours on top.
+
+Everything is in the grid columns, in **Task details → Estimate** (a small table of baseline, planned, actual and forecast with the budget), and in **Costs → By task**, which also lists the tasks heading over their budget. The status report names tasks heading over their budget, and the assistant can set them: *"Give the cost estimate 48 hours and a $5,000 budget."* Budgets are Keystone-only: they aren't written to the MS Project file (typed hours are, as each assignment's work).
+
 ### Close the week and the status report
 
 <img src="screenshots/plan-status.png" alt="Plan, Status view: the last status At risk, a milestone trend chart with 60% plans submitted and PS&E submitted drifting a day later each week, and the status history table" width="900">
@@ -565,7 +585,7 @@ Notes and documents are split into chunks (by heading, page, slide, sheet, funct
 
 - **Staying current:** the index updates as you go. Files you save, files the assistant changes and files edited elsewhere are re-embedded within a few seconds while the app is open. Only changed files are processed, each at most once per pass; a file that keeps changing (a solver job that is still running, a log) waits until it has been quiet for 30 seconds.
 - **Memory:** the model uses roughly 100 MB while it works and is unloaded after 5 idle minutes.
-- **GPU or CPU:** with a GPU, Edge and Chrome (and recent Firefox) run the model through WebGPU, usually 5–20× faster on a big vault; otherwise it runs on the CPU with several threads. Choose *CPU only* in **Settings → Search index → What to index and how** if the GPU misbehaves. The GPU uses the full-precision model file (about 90 MB, downloaded or bundled once).
+- **GPU or CPU:** with a GPU, Edge and Chrome (and recent Firefox) run the model through WebGPU, usually 5–20× faster on a big vault; otherwise it runs on the CPU with several threads. WebGPU isn't equally reliable everywhere (some Linux drivers return wrong numbers or never answer), so Keystone only uses the GPU after its results match the CPU's on a test sentence, checks every GPU batch, and gives up on a GPU that doesn't answer. In any of those cases it switches to the CPU by itself, says why under **Settings → Search index**, and starts on the CPU in that browser for a week. Choose *CPU only* there to skip the GPU entirely; choosing *GPU when available* again gives it another try. The GPU uses the full-precision model file (about 90 MB, downloaded or bundled once).
 - **Offline:** the model and its runtime are downloaded once, through the app, into `data/models/`, and served locally after that.
 - **Turn it off,** or rebuild the index, in Settings.
 

@@ -487,3 +487,60 @@ export function suggestRag(m, rules = RAG_RULES) {
   if (m.openChanges) { scope = 'amber'; why.scope = `${m.openChanges} open change request${m.openChanges > 1 ? 's' : ''}`; }
   return { overall: worst(schedule, cost, scope), schedule, cost, scope, why };
 }
+
+// ---------- estimates per task: typed hours, a budget, remaining and forecast ----------
+/** Hours typed for a task → its duration in minutes. Effort-driven, like MS Project with fixed units:
+ *  120 h with Maria (100%) and Priya (50%) takes 120 ÷ 1.5 = 80 working hours. */
+export function durationForWork(workMinutes, assignments = []) {
+  const units = assignments.reduce((s, a) => s + (a.units ?? 1), 0);
+  return Math.max(0, Math.round(units > 0 ? workMinutes / units : workMinutes));
+}
+/**
+ * Each task against its estimates. Hours: baseline (the original estimate), planned (the current estimate – what you
+ * typed, or duration × people), actual, remaining and forecast (actual + planned × the part not done). The budget is a
+ * separate check next to the cost from rates: a summary's budget is its own when set, otherwise the sum of its tasks'
+ * budgets – and then it's compared only with the tasks that have one.
+ * planned: plannedCost(); actual: allocateActuals().byTask. Returns Map uid → numbers.
+ */
+export function taskChecks(plan, sched, planned, actual, n = 0) {
+  const own = t => t && t.budget != null && t.budget !== '' && Number.isFinite(+t.budget) ? +t.budget : null;
+  const byUid = new Map(plan.tasks.map(t => [t.uid, t]));
+  const KEYS = ['plannedH', 'actualH', 'remainingH', 'forecastH', 'plannedC', 'actualC', 'remainingC', 'forecastC'];
+  const out = new Map(), kids = sched.outline.kids;
+  const go = uid => {
+    const r = sched.byUid.get(uid), t = byUid.get(uid);
+    if (!r) return null;
+    let x;
+    if (!r.summary) {
+      const left = 1 - Math.min(100, r.pct || 0) / 100, a = actual.get(uid) || { hours: 0, cost: 0 }, b = (t.baselines || {})[n] || {};
+      const pH = planned.hoursByTask.get(uid) || 0, pC = planned.byTask.get(uid) || 0;
+      x = { plannedH: pH, actualH: a.hours, remainingH: pH * left, forecastH: a.hours + pH * left, baselineH: b.hours ?? null,
+        plannedC: pC, actualC: a.cost, remainingC: pC * left, forecastC: a.cost + pC * left, baselineC: b.cost ?? null, budget: own(t) };
+      x.coveredF = x.budget != null ? x.forecastC : 0; x.coveredA = x.budget != null ? x.actualC : 0;
+    } else {
+      x = Object.fromEntries(KEYS.map(k => [k, 0]));
+      let bsum = null, bl = null, bh = null, cf = 0, ca = 0;
+      for (const k of kids.get(uid) || []) {
+        const c = go(k);
+        if (!c) continue;
+        for (const key of KEYS) x[key] += c[key] || 0;
+        if (c.budget != null) bsum = (bsum || 0) + c.budget;
+        if (c.baselineC != null) bl = (bl || 0) + c.baselineC;
+        if (c.baselineH != null) bh = (bh || 0) + c.baselineH;
+        cf += c.coveredF; ca += c.coveredA;
+      }
+      x.baselineC = bl; x.baselineH = bh;
+      if (own(t) != null) { x.budget = own(t); x.coveredF = x.forecastC; x.coveredA = x.actualC; }
+      else { x.budget = bsum; x.budgetFromTasks = bsum != null; x.coveredF = cf; x.coveredA = ca; }
+    }
+    x.estimateH = x.plannedH;
+    x.budgetLeft = x.budget != null ? x.budget - x.coveredA : null;
+    x.budgetForecast = x.budget != null ? x.coveredF : null;   // the forecast of what the budget covers
+    x.overBudget = x.budget != null && x.coveredF > x.budget + 0.5;
+    x.overHours = x.plannedH > 0 && x.forecastH > x.plannedH * 1.001 + 0.05;
+    out.set(uid, x);
+    return x;
+  };
+  for (const u of kids.get(null) || []) go(u);
+  return out;
+}

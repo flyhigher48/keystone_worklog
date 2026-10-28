@@ -7,6 +7,7 @@ If LanceDB isn't installed, `available` is False and the app falls back to keywo
 """
 import atexit
 import json
+import math
 import os
 import re
 import shutil
@@ -306,14 +307,17 @@ class VectorIndex:
         with self.lock:
             st = self._checked_state(root, model)
             st["model"] = model
-            tbl = self._table(create=True)
-            tbl.delete(f"path = '{self._q(path)}'")
-            rows = []
+            rows = []  # check every vector before anything is deleted: a bad batch must not wipe the file's old entries
             for i, c in enumerate(chunks[:DOC_MAX_CHUNKS]):
                 vec = c.get("vector") or []
                 if len(vec) != DIM:
                     raise ValueError(f"expected {DIM}-dimension vectors, got {len(vec)}")
+                if not all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in vec):
+                    raise ValueError("the embedding model returned invalid numbers (NaN) – the GPU path is not working on this computer. "
+                                     "Keystone switches to the CPU; or choose CPU under Settings → Search index")
                 rows.append({"path": path, "chunk": i, "heading": c.get("heading", ""), "text": c.get("text", ""), "vector": [float(x) for x in vec]})
+            tbl = self._table(create=True)
+            tbl.delete(f"path = '{self._q(path)}'")
             if rows:
                 tbl.add(rows)
             st["files"][path] = {"mtime": int(mtime), "n": len(rows), "at": int(time.time()), **({"error": str(error)[:300]} if error else {})}

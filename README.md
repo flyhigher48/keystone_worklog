@@ -123,6 +123,7 @@ The timesheet tracks your hours; the **Costs** view tracks the whole team's. Run
 
 - **People & rates:** one team list for every plan, with each person's ERP aliases and dated pay rates.
 - **Cost models:** the ERP gives pay and fringe; you add what it leaves out (overhead, service charges, $/hour fees, a fee on the total). Each project picks its model, and every number shows its working.
+- **Estimate each task:** type the hours it needs (the duration follows from the people on it) and, if you like, a dollar budget as a separate check. Baseline, planned, actual and forecast sit side by side, and anything heading over turns red.
 - **Earned value:** planned cost from people's rates, saved with the baseline. Actual cost goes on the tasks *that person* was scheduled on that day. You get CPI, SPI, the forecast at completion, the date the money runs out, and an S-curve.
 - **Close the week:** red/amber/green suggested from the numbers (a reason is needed to override it), drafted *done* and *next* lists, and a frozen snapshot. The **status report** is written from it as an Obsidian note, an Outlook email draft or a PDF. The **milestone trend** chart shows what's slipping a little each week.
 - **All plans:** every plan's status, finish, cost and next milestone; every milestone on one timeline; each person's load across all plans; and *who's free* for the next job.

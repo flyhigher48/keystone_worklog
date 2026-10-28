@@ -226,3 +226,44 @@ test('RAG suggestions from the numbers', () => {
   assert.equal(C.suggestRag({ cpi: 1, eac: 105, budget: 100 }).cost, 'amber');
   assert.equal(C.suggestRag({ openChanges: 2 }).scope, 'amber');
 });
+
+test('typed hours set the duration from the people on the task (effort-driven)', () => {
+  assert.equal(C.durationForWork(120 * 60, [{ units: 1 }, { units: 0.5 }]), 80 * 60);   // 120 h ÷ 1.5 people
+  assert.equal(C.durationForWork(40 * 60, [{ units: 0.5 }]), 80 * 60);                   // half-time: twice as long
+  assert.equal(C.durationForWork(16 * 60, []), 16 * 60);                                  // nobody assigned: the hours are the duration
+  assert.equal(C.durationForWork(-5, [{ units: 1 }]), 0);
+});
+
+test('each task against its estimate and budget: remaining, forecast and heading over', () => {
+  const plan = bridge(), ctx = C.planContext(plan, DIR, RATE_MODEL);
+  let s = E.schedule(plan);
+  plan.tasks = E.setBaseline(plan, s, 0).tasks;
+  C.baselineCosts(plan, s, ctx, 0);                         // A: 24 h, $1,560 · B: 24 h, $1,320
+  plan.tasks[1].percent = 50;                               // A half done…
+  plan.tasks[1].budget = 1500;                              // …with a $1,500 budget
+  plan.tasks[2].budget = 2000;
+  s = E.schedule(plan);
+  const pc = C.plannedCost(plan, s, ctx);
+  const actual = C.allocateActuals(plan, s, ctx, [{ date: '2026-10-19', hours: 10, name: 'Maria Lopez' }, { date: '2026-10-20', hours: 8, name: 'Maria Lopez' }]);
+  const x = C.taskChecks(plan, s, pc, actual.byTask, 0);
+  const a = x.get(2);
+  near(a.baselineH, 24); near(a.plannedH, 24); near(a.actualH, 18); near(a.remainingH, 12); near(a.forecastH, 30);   // 18 h used and half still to do
+  assert.ok(a.overHours);                                   // 30 h forecast > 24 h planned
+  near(a.actualC, 18 * 65); near(a.forecastC, 18 * 65 + 1560 / 2);
+  assert.ok(a.overBudget); near(a.budgetForecast, a.forecastC);   // $1,950 forecast against $1,500
+  near(a.budgetLeft, 1500 - 18 * 65);
+  const b = x.get(3);
+  assert.ok(!b.overBudget && !b.overHours);
+  near(b.forecastC, 1320);
+  const phase = x.get(1);                                   // the summary adds up its tasks and their budgets
+  near(phase.budget, 3500); assert.ok(phase.budgetFromTasks);
+  near(phase.budgetForecast, a.forecastC + b.forecastC);    // only the tasks that have budgets
+  near(phase.forecastH, 30 + 24); near(phase.actualC, 18 * 65);
+  plan.tasks[0].budget = 3000;                              // its own budget wins over the sum
+  const y = C.taskChecks(plan, s, pc, actual.byTask, 0).get(1);
+  near(y.budget, 3000); assert.ok(!y.budgetFromTasks);
+  plan.tasks[2].budget = null;                              // an unbudgeted task isn't counted against the tasks' budgets
+  plan.tasks[0].budget = null;
+  const z = C.taskChecks(plan, s, pc, actual.byTask, 0).get(1);
+  near(z.budget, 1500); near(z.budgetForecast, a.forecastC);
+});
