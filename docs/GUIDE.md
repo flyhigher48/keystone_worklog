@@ -211,7 +211,8 @@ Plans are separate from the Board: the Board holds the cards you're working on n
 
 ### The grid and the Gantt
 
-- **Type into the grid** like a spreadsheet. Click a cell and type, or press `F2`/`Enter` to edit. `Enter` moves down, `Tab` moves right. `Insert` adds a task, `Delete` removes the selected ones.
+- **Type into the grid** like a spreadsheet. Click a cell and type, or press `F2`/`Enter` to edit. `Enter` moves down, `Tab` moves right. `Insert` adds a task below the selected one, `Shift+Insert` adds one above it, `Delete` removes the selected ones.
+- **Insert above or below, and milestones:** right-click a row or a bar for *Insert a task (or milestone) above/below*, and *Make it a milestone* / *Make it a task* – also the ⤒ and ◇ buttons, and `Ctrl+Shift+M`. Several selected tasks switch together; a milestone that goes back to being a task gets its old duration back. Summary tasks can't be milestones (their dates come from their tasks).
 - **Durations:** `3d`, `2w`, `4h`, `1mo`; `0` makes a milestone. A `?` (`5d?`) marks an estimate. `3ed` is 3 *elapsed* days (weekends count).
 - **Dates:** `10/19/26`, `Oct 19` or `2026-10-19`. Typing a **Start** sets *Start No Earlier Than* (like MS Project). Typing a **Finish** changes the duration.
 - **Predecessors** use row IDs, like MS Project: `4`, `7SS`, `9FF+2d`, `12SF-25%`. A link that would make a loop is refused.

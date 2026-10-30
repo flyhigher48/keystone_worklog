@@ -397,14 +397,16 @@ function assignFromText(uid, text) {
 }
 
 // ---------- structure commands ----------
+/** A new task or milestone: below the selected task (and its subtasks), or above it with opts.before. */
 export function addTask(opts = {}) {
-  const p = S.plan, uid = nextUid(), after = opts.after ?? [...S.sel].pop();
-  const ref = after != null ? taskOf(after) : null;
+  const p = S.plan, uid = nextUid(), before = opts.before ?? null, after = before != null ? null : opts.after ?? [...S.sel].pop();
+  const ref = before != null ? taskOf(before) : after != null ? taskOf(after) : null;
   const t = { uid, name: opts.name || (opts.milestone ? 'New milestone' : 'New task'), parentUid: ref ? ref.parentUid ?? null : null,
     duration: { minutes: opts.milestone ? 0 : p.units.minutesPerDay, format: 'd', estimated: !opts.milestone }, milestone: !!opts.milestone,
     links: [], percent: 0, priority: 500, notes: '', constraint: { type: 'ASAP' }, baselines: {}, custom: {} };
   change(opts.milestone ? 'Add milestone' : 'Add task', () => {
-    if (ref) {  // after the selected task and everything under it
+    if (ref && before != null) p.tasks.splice(p.tasks.findIndex(x => x.uid === before), 0, t);  // right above it, at its outline level
+    else if (ref) {  // after the selected task and everything under it
       const idx = Math.max(...[after, ...descendants(after)].map(u => p.tasks.findIndex(x => x.uid === u)));
       p.tasks.splice(idx + 1, 0, t);
     } else p.tasks.push(t);
@@ -413,6 +415,23 @@ export function addTask(opts = {}) {
   redraw();
   if (opts.edit !== false) setTimeout(() => startEdit(uid, 'name', ''), 30);
   return t;
+}
+/** Turn the selected tasks into milestones, or back into tasks (with the duration they had). Summaries are left alone. */
+export function toggleMilestone(uids = [...S.sel]) {
+  const list = uids.map(taskOf).filter(t => t && !S.sched.byUid.get(t.uid)?.summary);
+  if (!list.length) return toast(uids.length ? 'A summary task can\'t be a milestone – its dates come from its tasks' : 'Select a task first');
+  const toMs = !list.every(t => S.sched.byUid.get(t.uid).milestone);
+  change(toMs ? (list.length > 1 ? `Make ${list.length} milestones` : 'Make it a milestone') : (list.length > 1 ? `Make ${list.length} tasks` : 'Make it a task'), () => {
+    for (const t of list) {
+      if (toMs) {
+        if ((t.duration || {}).minutes > 0) t.durationBefore = { ...t.duration };  // remembered, so "Make it a task" gives it back
+        t.duration = { minutes: 0, format: (t.duration || {}).format || 'd' }; t.milestone = true;
+      } else {
+        t.duration = t.durationBefore && t.durationBefore.minutes > 0 ? { ...t.durationBefore } : { minutes: S.plan.units.minutesPerDay, format: 'd' };
+        delete t.durationBefore; t.milestone = false;
+      }
+    }
+  });
 }
 function deleteSelected() {
   const sel = [...S.sel];
@@ -646,11 +665,13 @@ function ganttView() {
   const filters = [['all', 'All tasks'], ['critical', 'Critical'], ['late', 'Late or slipping'], ['milestones', 'Milestones'], ['incomplete', 'Incomplete'], ['mine', 'My tasks'], ['issues', 'With open issues']];
   const sel = h('select', { style: 'width:auto', 'aria-label': 'Filter', onchange: e => { S.filter = e.target.value; redraw(); } }, filters.map(([k, l]) => h('option', { value: k }, l)));
   sel.value = S.filter;
-  const search = h('input', { type: 'search', placeholder: 'Find a task…', value: S.q, style: 'width:170px', oninput: e => { S.q = e.target.value; clearTimeout(S.qt); S.qt = setTimeout(redraw, 200); } });
+  const search = h('input', { type: 'search', placeholder: 'Find a task…', value: S.q, style: 'width:120px', oninput: e => { S.q = e.target.value; clearTimeout(S.qt); S.qt = setTimeout(redraw, 200); } });
   const zoom = h('div', { class: 'seg' }, Object.keys(ZOOMS).map(z => h('button', { class: S.zoom === z ? 'on' : '', onclick: () => setZoom(z) }, z[0].toUpperCase() + z.slice(1))));
   const tools = h('div', { class: 'pl-tools' },
     h('button', { class: 'btn primary', title: 'Add a task below the selected one (Insert)', onclick: () => addTask() }, icon('plus'), 'Task'),
-    h('button', { class: 'btn', title: 'Add a milestone', onclick: () => addTask({ milestone: true }) }, '◆ Milestone'),
+    h('button', { class: 'btn', title: 'Add a milestone below the selected task', onclick: () => addTask({ milestone: true }) }, '◆ Milestone'),
+    h('button', { class: 'btn ghost', title: 'Insert a task above the selected one (Shift+Insert)', onclick: () => { const u = [...S.sel][0]; u != null ? addTask({ before: u }) : addTask(); } }, '⤒'),
+    h('button', { class: 'btn ghost', title: 'Make the selected tasks milestones, or back into tasks (Ctrl+Shift+M)', onclick: () => toggleMilestone() }, '◇'),
     h('button', { class: 'btn ghost', title: 'Indent (Alt+Shift+→)', onclick: indent }, '→'),
     h('button', { class: 'btn ghost', title: 'Outdent (Alt+Shift+←)', onclick: outdent }, '←'),
     h('button', { class: 'btn ghost', title: 'Link the selected tasks in order (Ctrl+F2)', onclick: linkSelected }, icon('link')),
@@ -882,7 +903,9 @@ function gridKey(e) {
   if (e.shiftKey && k === 'F2') { e.preventDefault(); if (c) openTask(c.uid); return; }
   const moves = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
   if (moves[k]) { e.preventDefault(); return moveCursor(moves[k]); }
+  if (k === 'Insert' && e.shiftKey) { e.preventDefault(); const u = [...S.sel][0]; return u != null ? addTask({ before: u }) : addTask(); }
   if (k === 'Insert') { e.preventDefault(); return addTask(); }
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && k.toLowerCase() === 'm') { e.preventDefault(); return toggleMilestone(); }
   if (k === 'Delete') { e.preventDefault(); return deleteSelected(); }
   if (!c) return;
   if (k === 'F2' || k === 'Enter') { e.preventDefault(); return startEdit(c.uid, c.k); }
@@ -897,8 +920,11 @@ function rowMenu(uid) {
   const t = taskOf(uid), r = S.sched.byUid.get(uid);
   return [
     { icon: 'edit', label: 'Task details…', run: () => openTask(uid) },
+    { icon: 'plus', label: 'Insert a task above', run: () => addTask({ before: uid }) },
     { icon: 'plus', label: 'Insert a task below', run: () => addTask({ after: uid }) },
+    { icon: 'plus', label: 'Insert a milestone above', run: () => addTask({ before: uid, milestone: true }) },
     { icon: 'plus', label: 'Insert a milestone below', run: () => addTask({ after: uid, milestone: true }) },
+    !r.summary ? { icon: 'repeat', label: (S.sel.size > 1 ? [...S.sel].every(u => S.sched.byUid.get(u)?.milestone) : r.milestone) ? (S.sel.size > 1 ? 'Make them tasks' : 'Make it a task') : (S.sel.size > 1 ? 'Make them milestones' : 'Make it a milestone'), run: () => toggleMilestone(S.sel.size > 1 ? [...S.sel] : [uid]) } : null,
     '-',
     { icon: 'right', label: 'Indent', run: indent }, { icon: 'left', label: 'Outdent', run: outdent },
     S.sel.size > 1 ? { icon: 'link', label: 'Link the selected tasks', run: linkSelected } : null,
