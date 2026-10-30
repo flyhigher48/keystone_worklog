@@ -136,6 +136,13 @@ The timesheet tracks your hours; the **Costs** view tracks the whole team's. Run
 
 Pay data never leaves your computer: rates are in owner-only files, and an AI profile only sees dollar amounts when you turn on **Allow cost data** for it. Pay rates are never sent.
 
+### 📄 A project brief you can share in one click
+Every plan opens on its **Brief**: what the project is (background, objectives, scope in and out, key facts, links, contacts – a note in your vault at `Keystone/Projects/<project>/Brief.md`, so it's in Obsidian too), where it stands (status, finish, progress, cost, next milestone, risks, in one plain sentence), a dated **log** of updates, wins and problems, and the **decision log**. When you need it, **Share…** shows a live preview with a tick box on every section and item, so you can take out anything internal before it goes to the sponsor, then makes a self-contained **HTML brief** or a **PowerPoint** built on PowerPoint's standard layouts – add your company background to the slide master and every slide follows.
+
+| Review before sharing | The PowerPoint, ready for your slide master |
+| --- | --- |
+| <img src="docs/screenshots/brief-review.png" alt="Review before sharing: preset, a checklist of sections and items, and a live preview of the brief" width="440"> | <img src="docs/screenshots/brief-deck.png" alt="Slides of the generated deck: title, at a glance, about the project, schedule, funding chart, funding summary, risks and decisions" width="440"> |
+
 ### 📋 Deliverables, leave and meetings on one calendar
 
 | Kanban board | Calendar |
@@ -222,7 +229,7 @@ KEYSTONE_DATA_DIR=demo/data python app.py --port 5050
 
 ### Things to ask the assistant
 
-> *"Log 8 hours to each project for today."* · *"How many hours do I still need this pay period?"* · *"What's overdue on the Board?"* · *"Set a due date of next Friday on every card that has none."* · *"Summarize the note I have open and pull out the action items."* · *"Draft a reply to my oldest follow-up."* · *"How much annual leave will I have on December 31?"* · *"Find the spec that covers elastomeric bearing pads."* · *"Which email from the county mentioned the culvert deadline?"* · *"Why did girder_v3 fail?"* · *"File my inbox."* · *"What's late on the bridge plan and what's driving the finish date?"* · *"What if the load rating takes a week longer?"* · *"Who is burning the bridge budget?"* · *"Who has 40 hours free in the first half of November?"* · *"Draft this week's status for the bridge plan."*
+> *"Log 8 hours to each project for today."* · *"How many hours do I still need this pay period?"* · *"What's overdue on the Board?"* · *"Set a due date of next Friday on every card that has none."* · *"Summarize the note I have open and pull out the action items."* · *"Draft a reply to my oldest follow-up."* · *"How much annual leave will I have on December 31?"* · *"Find the spec that covers elastomeric bearing pads."* · *"Which email from the county mentioned the culvert deadline?"* · *"Why did girder_v3 fail?"* · *"File my inbox."* · *"What's late on the bridge plan and what's driving the finish date?"* · *"What if the load rating takes a week longer?"* · *"Who is burning the bridge budget?"* · *"Who has 40 hours free in the first half of November?"* · *"Draft this week's status for the bridge plan."* · *"What's the scope of the bridge job?"* · *"Log that the county approved the pier 3 detail."*
 
 ---
 

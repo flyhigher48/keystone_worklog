@@ -7,10 +7,11 @@ import * as CU from './costui.js';
 import * as C from './costs.js';
 import * as ST from './status.js';
 import * as PF from './portfolio.js';
+import * as BR from './brief.js';
 
 const S = {  // planner state – survives re-renders of the page
   list: null, plan: null, sched: null, sel: new Set(), cursor: null, undo: [], redo: [], dirty: false, saving: null, conflict: null,
-  view: recall('nwa.plan.view') || 'gantt', zoom: recall('nwa.plan.zoom') || 'week', filter: 'all', q: '', collapsed: new Set(),
+  view: recall('nwa.plan.view') || 'brief', zoom: recall('nwa.plan.zoom') || 'week', filter: 'all', q: '', collapsed: new Set(),
   cols: JSON.parse(recall('nwa.plan.cols') || 'null') || {}, gridW: Number(recall('nwa.plan.gridW')) || Math.round(Math.min(870, Math.max(420, innerWidth * 0.5))), scrollTop: 0, scrollLeft: null,
   baselineN: 0, gantt: null, els: {}, previewSched: null, loading: false,
 };
@@ -83,6 +84,8 @@ export function resched() {
   }
 }
 let saveTimer;
+/** Change the plan without an undo step (sharing settings and the like), and save it. */
+export function patchPlan(fn) { if (!S.plan) return; fn(S.plan); queueSave(); }
 function queueSave() { S.dirty = true; S.edits = (S.edits || 0) + 1; clearTimeout(saveTimer); saveTimer = setTimeout(flush, 700); paintStatus(); }
 export async function flush() {
   clearTimeout(saveTimer);
@@ -562,7 +565,7 @@ export function mount(root) {
   pick.value = p.id;
   const statusIn = h('input', { type: 'date', value: (p.statusDate || '').slice(0, 10), title: 'Status date: progress is measured as of this date',
     onchange: e => change('Set status date', pl => { pl.statusDate = e.target.value ? e.target.value + 'T17:00' : null; }) });
-  const views = [['gantt', 'Gantt'], ['team', 'Team'], ['workload', 'Workload'], ['costs', 'Costs'], ['raid', 'Issues & risks'], ['status', 'Status'], ['dashboard', 'Dashboard']];
+  const views = [['brief', 'Brief'], ['gantt', 'Gantt'], ['team', 'Team'], ['workload', 'Workload'], ['costs', 'Costs'], ['raid', 'Issues & risks'], ['status', 'Status'], ['dashboard', 'Dashboard']];
   const tb = h('div', { class: 'pl-top' },
     h('div', { class: 'pl-title' }, pick, proj ? pchip(proj) : null, h('span', { class: 'pl-save', ref: null }, '')),
     h('div', { class: 'seg' }, views.map(([k, l]) => h('button', { class: S.view === k ? 'on' : '', onclick: () => { S.view = k; remember('nwa.plan.view', k); redraw(); } }, l))),
@@ -579,6 +582,7 @@ export function mount(root) {
   const errs = S.sched && S.sched.errors.length ? h('div', { class: 'duebar' }, icon('bell'), h('div', { class: 'txt' }, ...S.sched.errors.slice(0, 3).map(e => h('div', {}, `Task ${rowIds().get(e.uid) || '?'}: ${e.text}`)))) : null;
   let body;
   if (S.view === 'gantt') body = ganttView();
+  else if (S.view === 'brief') body = BR.briefView(api_());
   else if (S.view === 'costs') body = CU.costsView(api_());
   else if (S.view === 'status') body = ST.statusView(api_());
   else body = V.render(S.view, api_());
@@ -604,6 +608,8 @@ function planMenu() {
     { header: p.name },
     { icon: 'plus', label: 'Set baseline…', run: baselineDialog },
     { icon: 'check', label: 'Close the week…', run: () => ST.closeWeekDialog(api_()) },
+    { icon: 'plus', label: 'Add an update…', run: () => BR.updateDialog(api_()) },
+    { icon: 'down', label: 'Share the brief (HTML / PowerPoint)…', run: () => BR.shareDialog(api_()) },
     { icon: 'sync', label: 'Update progress to the status date', run: () => {
       if (!p.statusDate) return toast('Set a status date first (top right)');
       change('Update progress to the status date', pl => Object.assign(pl, E.updateToStatus(pl, S.sched)));
@@ -1247,4 +1253,4 @@ export async function show(planId, uid) {
   view.tab = 'plan'; render();
   if (uid != null) setTimeout(() => selectAndShow(uid), 50);
 }
-export { E as engine, CU as costs, ST as status };
+export { E as engine, CU as costs, ST as status, BR as brief };

@@ -106,7 +106,7 @@ Nothing else is downloaded at runtime: the Markdown, math (KaTeX) and sanitizer 
 | **Timesheet** | One pay period (two Sun–Sat weeks). Each row has a project, Network, Activity, pay code and TS, plus hours per day. The top card shows your total against 80 h, split by type. Includes the pay-period check, **Fill from schedule**, **Same as last week** and **Mark as submitted**. **My usual** saves a pay period as your usual pattern and fills the empty days of another from it, skipping holidays (filled as LH), out-of-office days and days that already have hours. |
 | **Projects** | Your list of Network + Activity pairs with a name and a budget of chargeable hours. Shows hours used and remaining, deliverable progress, and a link to the project's note. |
 | **Board** | A kanban board of deliverables (To do / In progress / Blocked / Done), each linked to a project. Drag cards between columns, or click one to edit it. **Calendar** shows cards on their due dates; drag a card onto a day to set its due date. It also shows days you're out of office: add annual leave, sick leave, travel or other time away with **Out of office** (or double-click a day), and LA/LS hours you've entered on the Timesheet appear on their own. Annual and sick leave can also put the hours on the timesheet (scheduled hours on each workday, holidays skipped); the dialog shows the balance it leaves and warns about going negative or staying over the carry-over limit. Editing or deleting the entry takes those hours back off. **Import calendar** reads an `.ics` export from Outlook, Google or Apple (read-only, stored only in your data file) and shows meetings on the calendar; click one to charge its time to a project – a project whose name or network is in the title is suggested. |
-| **Plan** | Project plans like MS Project: a task grid and a Gantt timeline you can drag, milestones, dependencies and the critical path, who's working on what, progress against a baseline, and issues and risks. Opens and saves MS Project files. Team costs from your ERP with earned value, weekly status reports and an all-plans view. See [Project plans](#project-plans-plan-tab) and [Team costs](#team-costs-status-reports-and-the-portfolio). |
+| **Plan** | The **Brief** (the project's home page, shared as HTML or PowerPoint) and project plans like MS Project: a task grid and a Gantt timeline you can drag, milestones, dependencies and the critical path, who's working on what, progress against a baseline, and issues and risks. Opens and saves MS Project files. Team costs from your ERP with earned value, weekly status reports and an all-plans view. See [Project plans](#project-plans-plan-tab) and [Team costs](#team-costs-status-reports-and-the-portfolio). |
 | **Follow-ups** | Emails you owe a reply: from, subject, reply-by date, project, status (To reply / Waiting on them / Done). Import a saved `.eml`, paste an email (From/Subject are filled in), or capture one. **Draft reply ✦** has Keystone write a reply for you to copy. It never sends anything. |
 | **Reports** | Budget burn-down (pick a project) plus a burn-rate table for every project, leave forecast with a use-or-lose warning, hours by project by month – the last 6 months or a whole year (CSV or a vault note) – and **pay period history** (what you marked submitted, and when). **Print / PDF** prints the page in light colours; choose *Save as PDF* in the print dialog. **Avg burn** = RG hours in the last 4 completed weeks ÷ the number of those weeks, counting only weeks since the project was first charged (before a full week exists, it uses this week so far). **Weeks left** = budget left ÷ avg burn. |
 | **Notes** | Browse and edit the Markdown notes in your Obsidian vault, with live preview, `[[wikilinks]]` and clickable checkboxes. Documents (PDF, Office, emails, code, solver files…) are listed too and open as a PDF viewer or as their text. **File the inbox** appears when there are files in `Inbox/`. |
@@ -465,6 +465,104 @@ Profiles with tracker access also get **cost_summary**, **who_is_free**, **portf
 
 Each AI profile has **Allow cost data** (Settings → AI assistant), **off by default**. Off, the tools give hours, ratios like CPI and SPI, and dates, with every dollar amount hidden. On, they include dollar totals. **Pay rates are never sent** either way; keep the switch off for cloud models.
 
+## The project brief, the weekly log and sharing
+
+<img src="screenshots/plan-brief.png" alt="Plan, Brief view: status, summary, client and NWA, a one-sentence summary of where the project stands, tiles for finish, progress, cost, next milestone and risks, then decisions and help needed, updates, key facts, links and contacts" width="900">
+
+**Plan → Brief** is the first thing you see when you open a plan. It's the project's home page, like a README but alive:
+- **You write:** what the project is.
+- **Keystone adds:** where it stands, from the plan, the costs, the risks and the weekly status.
+
+### The brief note
+
+The brief is a note in your vault: **`Keystone/Projects/<project>/Brief.md`**, beside the project note Keystone already keeps. Edit it in Keystone (the ✎ on each section) or in Obsidian; both edit the same file. It's searchable, and the assistant can read it.
+
+- **Start the brief** creates it from a template. It has a summary (in the note's frontmatter, like the client and the cover photo) and these sections:
+  - Background, Objectives, Scope (`### In scope` / `### Out of scope`), Success criteria;
+  - Assumptions and constraints, Stakeholders;
+  - Key facts, Key links, Contacts, Lessons learned.
+- **Key facts** are lines like `- **Contract:** 26-114`.
+- **Key links** are `[[links]]` to files in the vault (the contract, the spec, the latest drawings) or web addresses.
+- **Contacts** and **Stakeholders** are Markdown tables.
+- **Add a section** for anything else (Permits, Glossary…). Sections Keystone doesn't know are kept and shown.
+- **Photos are optional:** pick a cover photo with the ✎ next to the summary, or put `![[Photos/…jpg]]` in any section.
+
+### The weekly log
+
+**Add an update** (on the Brief, in the Plan ▾ menu, or `Ctrl+K` → *Add a project update*) adds a dated entry to the plan's log:
+- **Kinds:** *update*, *win*, *problem*, *decision*, *client contact*, *site visit*, *lesson learned*.
+- **Optional:** related tasks, and an **Internal** tick for anything that shouldn't go to the sponsor.
+
+The log is kept with the plan (`data/plans/<id>.log.json`). Nothing is sent anywhere. **Close the week** drafts from it: wins, updates, site visits and client contacts since the last status become *Done this week*, and problems become *Decisions or help needed*. The weekly snapshots stay where they are; they're never emailed or pushed.
+
+### Decisions
+
+A decision in **Issues & risks** has the decision log fields:
+- *Proposed / Decided / Superseded*;
+- the date it was decided and who decided;
+- the options considered and the rationale;
+- the impact on schedule, cost and scope.
+
+Proposed decisions show as **Decisions and help needed** at the top of the brief. Decided ones are in **Key decisions**, with their rationale. Any issue, risk, action or decision can be ticked **Internal**.
+
+### Sharing: the HTML brief and the PowerPoint
+
+<img src="screenshots/brief-review.png" alt="Review before sharing: the Sponsor preset, a checklist of every section and item with an internal risk and two problems unticked, and a live preview of the brief" width="900">
+
+Nothing is made until you ask. **Share…** (on the Brief, in Plan ▾, or `Ctrl+K` → *Share the project brief*) opens **Review before sharing**:
+
+- **The preview** is exactly what the file will contain, updated as you tick and untick.
+- **Internal** (the default) includes everything.
+- **Sponsor** unticks what usually stays internal:
+  - cost by person and hours per person;
+  - *problem* log entries;
+  - anything ticked *Internal*;
+  - the task appendix.
+- **Tick or untick anything else by hand:** whole sections, or single items such as a risk, a decision, an update, a contact, a key fact, a link or a milestone.
+- **Save as preset…** keeps a set of choices. The last choices for each plan are remembered, so next month it's two clicks.
+- **Covers:** *since the last brief* (the default), *this month* or *the whole project*. This decides which updates, finished tasks and changes appear.
+- **Pay rates are never included**, whatever is ticked. A file with items removed says only that *some items were left out*, never which.
+
+Then:
+- **HTML brief:** one self-contained file. It opens in any browser without Keystone or the internet, prints cleanly to PDF, and reads well on a phone.
+- **PowerPoint:** a 16:9 deck.
+- **Also keep a copy in the vault** saves the file, dated, in `Keystone/Projects/<project>/Shared/`. It never overwrites; a second copy the same day gets *(2)*.
+
+<img src="screenshots/brief-html.png" alt="The HTML brief: status band, summary, at-a-glance tiles and what changed since the last brief" width="640">
+
+**What's in it:**
+- **Status band and at a glance:** five tiles and one plain-language sentence, written by rules rather than AI, such as *"Behind schedule by 3 working days; spending is forecast to finish $44k under budget; 1 open issue to resolve."*
+- **What changed** since the last brief.
+- **Decisions and help needed.**
+- **About the project:** from the brief note.
+- **Progress:** done, next, and the updates.
+- **The next two weeks**, by person.
+- **The plan:**
+  - the milestone timeline (baseline against forecast);
+  - a summary Gantt;
+  - the milestone trend;
+  - the milestones table.
+- **Funding:** budget, spent, forecast, the S-curve, cost by phase, and tasks heading over their budget.
+- **Issues and risks**, with the risk matrix.
+- **Key decisions**, with rationale and options.
+- **Team and contacts.**
+- **Key facts and documents.**
+- **Status history.**
+
+**The PowerPoint is built for your company template.** Every slide uses one of PowerPoint's standard layouts (*Title Slide*, *Title and Content*, *Comparison*, *Title Only*), and its text sits in that layout's placeholders. So:
+- **Your branding applies everywhere:** add the company background and logo to the **slide master** (**View → Slide Master**), or apply your theme, and every slide follows.
+- **Fonts and colours come from the theme.** Only the red/amber/green status is fixed.
+- **Tables are PowerPoint tables.**
+- **Funding and Cost by phase are PowerPoint charts** with their data inside (right-click → **Edit Data**).
+- **The schedule and milestone trend are pictures.**
+- **Speaker notes** carry the plain-language summaries.
+
+<img src="screenshots/brief-deck.png" alt="Eight slides of the deck: title with status, at a glance, about the project, schedule, funding chart, funding summary, issues and risks table, and decisions" width="900">
+
+The PowerPoint needs the `python-pptx` package (part of `pip install "keystone-worklog[documents]"`). The HTML brief needs nothing.
+
+**Ask Keystone:** *"What's the scope of the bridge job?"* (it reads the brief) · *"Log that the county approved the pier 3 detail"* (an update, shown for approval).
+
 ## Obsidian vault
 
 In **Settings → Obsidian vault**, click **Choose vault…** and browse to your vault folder (the one that contains `.obsidian`). From then on, every save writes these notes into a sub-folder of the vault (default `Keystone/`, changeable in Settings):
@@ -666,6 +764,7 @@ Paths are inside your data folder: `./data` in a source checkout, otherwise the 
 | `data/index/` · `data/models/` | Meaning-search index and the cached embedding model. Safe to delete; both are rebuilt. |
 | `data/chats/` · `data/assistant_undo/` | Assistant chat history and undo records. |
 | `data/plans/` | One JSON file per project plan (`p_….json`), plus a `.bak.json` with the previous save and `.status.json` with its weekly status snapshots (owner-only). Deleted plans go to `data/plans/.trash/`. |
+| `data/plans/<id>.log.json` | The plan's weekly log (updates, wins, problems…). Kept in `.trash` with its plan if the plan is deleted. |
 | `data/people.json` | People & rates: the team directory, pay rates, cost models and ERP layouts (owner-only). |
 | `data/costs/` | One ERP cost ledger per project (owner-only). Lines replaced by a newer import, and undone imports, are kept in `data/costs/.trash/`. |
 | `data/backups/` | One dated copy of `data.json` per day you use Keystone (the last 60). Restore one from **Settings → Reminders & backups**. `costs-<date>/` folders hold that day's `people.json` and cost ledgers. |
@@ -697,6 +796,7 @@ keystone_worklog/
   vector_index.py      note and document chunking and the LanceDB vector index
   msproject.py         MS Project XML (MSPDI) import and export; .mpp through MPXJ when it's installed
   costs.py             reading ERP exports (Excel, CSV, pasted rows) and the per-project cost ledgers
+  deck.py              the project brief as a PowerPoint deck, on PowerPoint's standard layouts
   documents.py         text from PDF, Word, PowerPoint, Excel, emails, code, notebooks, solver files and any text file (+ the text cache)
   offline_bundle.py    keystone-worklog-bundle: model + Python packages for air-gapped computers
   static/index.html    the whole web app (HTML, CSS and JS in one file)
@@ -704,7 +804,8 @@ keystone_worklog/
   static/planner/      the Plan tab (ES modules): engine.js (scheduling), gantt.js (canvas timeline),
                        ui.js (grid, dialogs, import/export), views.js (team, workload, issues, dashboard), ai.js (assistant tools),
                        costs.js (rates, cost models, earned value), costui.js (People & rates, ERP import, Costs view),
-                       status.js (Close the week, reports, milestone trend), portfolio.js (all plans)
+                       status.js (Close the week, reports, milestone trend), portfolio.js (all plans),
+                       report.js (the brief: Brief.md, the report model, the HTML file, the slide list), brief.js (Brief view, log, Review before sharing)
   static/vendor/       marked (Markdown), DOMPurify (HTML sanitizer) and KaTeX (math)
 app.py                 runs the app from a source checkout (python app.py)
 scripts/make_demo.py   builds the demo data (./demo) used for the README screenshots

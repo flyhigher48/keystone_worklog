@@ -208,6 +208,22 @@ export function raidDialog(A, item, preset = {}) {
   const mit = h('textarea', { rows: 2, placeholder: 'What you will do about it' }); mit.value = x.mitigation || '';
   const tasks = h('input', { value: (x.taskUids || []).map(u => ids.get(u)).filter(Boolean).join(', '), placeholder: 'Task numbers, e.g. 4, 7' });
   const riskRow = h('div', { class: 'row3' }, h('div', {}, h('label', {}, 'Probability (1–5)'), prob), h('div', {}, h('label', {}, 'Impact (1–5)'), imp), h('div', {}, h('label', {}, 'Status'), status));
+  // decisions: the decision log (shown in the brief and the deck)
+  const dstat = h('select', {}, [['proposed', 'Proposed – needs a decision'], ['decided', 'Decided'], ['superseded', 'Superseded']].map(([v, l]) => h('option', { value: v }, l)));
+  dstat.value = x.decisionStatus || (x.status === 'closed' ? 'decided' : 'proposed');
+  const decided = h('input', { type: 'date', value: x.decided || '' }), decidedBy = h('input', { value: x.decidedBy || '', list: 'pl-people', placeholder: 'Who decided' });
+  const options = h('textarea', { rows: 2, placeholder: 'Options considered, one per line' }); options.value = (x.options || []).join('\n');
+  const rationale = h('textarea', { rows: 2, placeholder: 'Why this option' }); rationale.value = x.rationale || '';
+  const impDays = h('input', { type: 'number', step: 'any', value: (x.decisionImpact || {}).days ?? '', placeholder: 'days' });
+  const impCost = h('input', { type: 'number', step: 'any', value: (x.decisionImpact || {}).cost ?? '', placeholder: '$' });
+  const impScope = h('input', { value: (x.decisionImpact || {}).scope || '', placeholder: 'scope change, if any' });
+  const decRows = h('div', { class: 'dec-rows' },
+    h('div', { class: 'row3' }, h('div', {}, h('label', {}, 'Decision'), dstat), h('div', {}, h('label', {}, 'Decided on'), decided), h('div', {}, h('label', {}, 'Decided by'), decidedBy)),
+    h('div', { class: 'row2' }, h('div', {}, h('label', {}, 'Options considered'), options), h('div', {}, h('label', {}, 'Rationale'), rationale)),
+    h('div', { class: 'row3' }, h('div', {}, h('label', {}, 'Schedule impact (working days)'), impDays), h('div', {}, h('label', {}, 'Cost impact'), impCost), h('div', {}, h('label', {}, 'Scope'), impScope)));
+  const internal = h('input', { type: 'checkbox', checked: x.internal ? '' : false });
+  const showKind = () => { riskRow.querySelectorAll('div')[0].hidden = riskRow.querySelectorAll('div')[1].hidden = kind.value !== 'risk'; decRows.hidden = kind.value !== 'decision'; };
+  kind.addEventListener('change', showKind);
   const dlg = h('dialog', { class: 'dlg', onclose: () => dlg.remove() },
     h('form', { method: 'dialog', onsubmit: e => {
       e.preventDefault();
@@ -215,7 +231,13 @@ export function raidDialog(A, item, preset = {}) {
       const byId = new Map([...ids].map(([u, i]) => [i, u]));
       const tu = tasks.value.split(/[,\s]+/).filter(Boolean).map(n => byId.get(+n)).filter(u => u != null);
       const out = { ...x, kind: kind.value, title: title.value.trim(), description: desc.value.trim(), owner: owner.value.trim(), due: due.value, status: status.value,
-        probability: +prob.value || 0, impact: +imp.value || 0, mitigation: mit.value.trim(), taskUids: tu };
+        probability: +prob.value || 0, impact: +imp.value || 0, mitigation: mit.value.trim(), taskUids: tu, internal: internal.checked };
+      if (out.kind === 'decision') {
+        Object.assign(out, { decisionStatus: dstat.value, decided: decided.value || (dstat.value === 'decided' ? fmt(new Date()) : ''), decidedBy: decidedBy.value.trim(),
+          options: options.value.split('\n').map(o => o.trim()).filter(Boolean), rationale: rationale.value.trim(), probability: 0, impact: 0,
+          decisionImpact: impDays.value || impCost.value || impScope.value.trim() ? { days: impDays.value === '' ? null : +impDays.value, cost: impCost.value === '' ? null : +impCost.value, scope: impScope.value.trim() } : null });
+        if (dstat.value !== 'proposed' && out.status !== 'closed') { out.status = 'closed'; out.closed = out.closed || out.decided; }
+      }
       if (out.status === 'closed' && !out.closed) out.closed = fmt(new Date());
       change(item ? `Edit ${out.kind}` : `Log ${out.kind}`, p => { p.raid ||= []; const i = p.raid.findIndex(r => r.id === out.id); if (i >= 0) p.raid[i] = out; else p.raid.push(out); });
       dlg.close();
@@ -225,10 +247,11 @@ export function raidDialog(A, item, preset = {}) {
       h('div', {}, h('label', {}, 'Title'), title),
       h('div', {}, h('label', {}, 'Description'), desc),
       h('div', { class: 'row2' }, h('div', {}, h('label', {}, 'Owner'), owner), h('div', {}, h('label', {}, 'Affects tasks'), tasks)),
-      riskRow,
+      riskRow, decRows,
       h('div', {}, h('label', {}, 'Response / mitigation'), mit),
+      h('label', { class: 'sw' }, internal, 'Internal – left out when sharing with the sponsor'),
       h('div', { class: 'btns' }, h('button', { type: 'button', class: 'btn', onclick: () => dlg.close() }, 'Cancel'), h('button', { type: 'submit', class: 'btn primary' }, 'Save'))));
-  document.body.append(dlg); dlg.showModal(); title.focus();
+  document.body.append(dlg); showKind(); dlg.showModal(); title.focus();
 }
 
 // ---------- dashboard ----------

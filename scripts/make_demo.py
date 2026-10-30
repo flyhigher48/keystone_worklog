@@ -227,7 +227,15 @@ def demo_plan(baseline=False):
                 {"id": "r3", "kind": "risk", "title": "County review takes longer than three weeks", "owner": "Maria Lopez", "due": "", "status": "monitoring",
                  "probability": 2, "impact": 3, "mitigation": "Pre-submittal meeting with the county.", "taskUids": [k], "created": iso(TODAY - timedelta(days=20)), "description": ""},
                 {"id": "r4", "kind": "decision", "title": "Replace bearings at Pier 3 first", "owner": "Me", "due": "", "status": "closed", "closed": iso(TODAY - timedelta(days=10)),
-                 "probability": 0, "impact": 0, "mitigation": "", "taskUids": [f], "created": iso(TODAY - timedelta(days=12)), "description": ""}])
+                 "probability": 0, "impact": 0, "mitigation": "", "taskUids": [f], "created": iso(TODAY - timedelta(days=12)), "description": "",
+                 "decisionStatus": "decided", "decided": iso(TODAY - timedelta(days=10)), "decidedBy": "Maria Lopez (County)",
+                 "options": ["Pier 3 first, then piers 1–2", "All three piers in one closure"], "rationale": "Pier 3 bearings are the worst (frozen, 40 mm out of position); doing them first keeps the other piers open to traffic and fits the May–June closure window.",
+                 "decisionImpact": {"days": 0, "cost": None, "scope": ""}},
+                {"id": "r5", "kind": "decision", "title": "Use a line-girder rating for the memo if the FE model isn't ready", "owner": "Maria Lopez", "due": iso(TODAY + timedelta(days=3)), "status": "open",
+                 "probability": 0, "impact": 0, "mitigation": "", "taskUids": [g], "created": iso(TODAY - timedelta(days=2)), "description": "Keeps the memo deadline; the FE rating follows in the 60% submittal.",
+                 "decisionStatus": "proposed", "options": ["Wait for the FE model", "Line-girder rating now, FE later"]},
+                {"id": "r6", "kind": "risk", "title": "Fabricator may claim extra for expediting the bearing pads", "owner": "Me", "due": iso(TODAY + timedelta(days=9)), "status": "open",
+                 "probability": 3, "impact": 2, "mitigation": "Hold to the contract dates; document the delay cause.", "taskUids": [f], "created": iso(TODAY - timedelta(days=3)), "description": "", "internal": True}])
 
 
 def runway_plan(baseline=False):
@@ -506,6 +514,112 @@ def status_history(plan, numbers):
                       "next": [["Girder FE model (Abaqus)", "Bearing replacement design"], ["Girder FE model – finer mesh at the bearings", "Load rating"], ["Load rating", "60% plans"]][k],
                       "decisions": [] if k < 2 else ["Approve the line-girder fallback for the rating memo"], "notes": "", "by": "you"})
     return snaps
+
+
+# ---------- the project brief (Plan → Brief) ----------
+def demo_brief():
+    return """---
+keystone: brief
+plan: p_0000b01d
+summary: Rehabilitate the three-span steel girder bridge on County Road 12 – new bearings at pier 3, deck repair and a load rating.
+client: County of Example – Public Works
+cover: ""
+---
+# Girder Bridge rehab – project brief
+
+The living summary of this project. Edit it here or in Keystone (Plan → Brief). The numbers – status, schedule, costs, risks – are added by Keystone when you share the brief.
+
+## Background
+
+The three-span steel girder bridge on County Road 12 over Mill Creek (built 1968) failed its last inspection at pier 3: the elastomeric bearings are frozen and the girders have walked about 40 mm. The county wants the bearings replaced, the deck joints repaired and a current load rating before the 2027 construction season.
+
+## Objectives
+
+- Replace the bearings at pier 3, then piers 1 and 2
+- Repair the deck joints and the spalled deck areas
+- Issue a load rating memo for the posted and legal loads
+- Deliver 60%, 90% and final PS&E on the county's schedule
+
+## Scope
+
+### In scope
+- Inspection, survey and as-builts
+- Girder FE model and load rating
+- Bearing replacement and jacking design
+- Deck repair details, specifications and cost estimate
+
+### Out of scope
+- Painting and lead abatement (separate county contract)
+- Approach roadway and guardrail
+- Construction inspection
+
+## Success criteria
+
+- PS&E accepted by the county by the contract date
+- Load rating memo accepted without a re-submittal
+- Design within the $156,000 fee
+
+## Assumptions and constraints
+
+- Night and weekend closures only, May to June
+- One lane open at all times during jacking
+- County review takes about three weeks per submittal
+
+## Stakeholders
+
+| Who | Cares about | How often they hear from us |
+| --- | --- | --- |
+| County Public Works | Schedule, closures, cost | Weekly status, monthly meeting |
+| Mill Creek residents | Closures and detours | Before each closure |
+| Bearing fabricator | Shop drawings, delivery dates | As needed |
+
+## Key facts
+
+- **Client:** County of Example – Public Works
+- **Contract:** 26-114
+- **NWA:** 4001234 / 0010
+- **Location:** County Road 12 over Mill Creek
+- **Funding:** County bond + state bridge program
+- **Structure:** Three-span continuous steel girder, 1968
+
+## Key links
+
+- [[Projects/Girder Bridge rehab/Girder Bridge rehab.md|Project notes]]
+- [[Projects/Girder Bridge rehab/Specs/Girder Bridge special provisions.pdf|Special provisions]]
+- [[Projects/Girder Bridge rehab/Budget tracker.xlsx|Budget tracker]]
+- [[Analysis/README.md|Analysis notes]]
+
+## Contacts
+
+| Name | Role | Organisation | Email | Phone |
+| --- | --- | --- | --- | --- |
+| Maria Lopez | County project manager | County of Example | mlopez@example.gov | 555-0142 |
+| Sam Ortiz | Bearings | Ortiz Steel | sam@ortiz-steel.example | 555-0187 |
+| Priya Shah | Design engineer | Our office | pshah@example.com | |
+
+## Lessons learned
+
+- Ask the fabricator for pad lead times at 30%, not 60%
+"""
+
+
+def demo_log():
+    """A few weeks of updates for the bridge plan's weekly log."""
+    def at(days, hh=10):
+        return iso(TODAY - timedelta(days=days)) + f"T{hh:02d}:00"
+    items = [
+        (24, "contact", "Kick-off with the county: closures only May–June, one lane open during jacking.", False),
+        (20, "site", "Site visit with Maria: pier 3 bearings frozen, girders walked ~40 mm. Photos in the project folder.", False),
+        (16, "win", "Inspection report submitted a day early.", False),
+        (12, "decision", "County agreed to do pier 3 first – see the decision log.", False),
+        (9, "problem", "girder_v3 FE run didn't converge at the jacking step – rebuilding the mesh at the bearings (v4).", False),
+        (6, "update", "FE model v4 converges; load rating started.", False),
+        (4, "problem", "Bearing pads delivery slipped two weeks at the fabricator.", False),
+        (3, "update", "Staffing: Priya moves to 60% plans full-time from next week; Linh helps with CAD.", True),
+        (2, "win", "County approved the pier 3 jacking detail.", False),
+        (1, "contact", "Maria asked for a line-girder rating fallback so the memo date holds.", False),
+    ]
+    return [{"id": f"l_demo{i:02d}", "at": at(d, 9 + i % 6), "kind": k, "text": t, "internal": internal, "by": "you"} for i, (d, k, t, internal) in enumerate(items)]
 
 # ---------- documents ----------
 def make_pdf(pages):
@@ -800,6 +914,8 @@ def main():
     people = data / "people.json"
     people.write_text(json.dumps(people_doc(), indent=1), encoding="utf-8")
     people.chmod(0o600)
+    (data / "plans" / "p_0000b01d.log.json").write_text(json.dumps({"entries": demo_log()}), encoding="utf-8")
+    write(vault, "Keystone/Projects/Girder Bridge rehab/Brief.md", demo_brief())
     erp_a, erp_b, cut_a, posted = erp_exports(dest, data, [(plans[0], "4001234|0010"), (plans[1], "4005678|0020")], tracker["periods"])
     for proj, plan in (("bridge", plans[0]), ("runway", plans[1])):  # budgets also cover what was charged before the plan started
         led = json.loads((data / "costs" / f"{proj}.json").read_text()) if (data / "costs" / f"{proj}.json").exists() else {"lines": []}

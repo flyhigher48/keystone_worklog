@@ -64,9 +64,16 @@ export function draft() {
     if ((r.pct || 0) >= 100 && (before ? before[2] < 100 : r.ef > since)) done.push((r.milestone ? '◆ ' : '') + t.name);
     else if ((r.pct || 0) < 100 && r.es <= ahead && r.ef >= n.statusMin - E.DAY) next.push(`${r.milestone ? '◆ ' : ''}${t.name} (${(r.pct || 0) > 0 ? `${r.pct}%, ` : ''}due ${fmtDate(r.ef, false)})`);
   }
-  const decisions = (p.raid || []).filter(x => x.status !== 'closed' && (x.kind === 'decision' || (x.kind === 'risk' && (x.probability || 0) * (x.impact || 0) >= 15))).map(x => x.kind === 'decision' ? x.title : `Risk: ${x.title}`);
+  const decisions = (p.raid || []).filter(x => x.status !== 'closed' && !['decided', 'superseded'].includes(x.decisionStatus) && (x.kind === 'decision' || (x.kind === 'risk' && (x.probability || 0) * (x.impact || 0) >= 15))).map(x => x.kind === 'decision' ? x.title : `Risk: ${x.title}`);
+  // the weekly log since the last status: wins and updates are "done", problems need help
+  const sinceIso = E.dateOf(since), first = t => String(t || '').split('\n')[0].slice(0, 160);
+  const logged = (S.logCache && S.logCache.planId === p.id ? S.logCache.entries : []).filter(e => e.at.slice(0, 10) >= sinceIso && e.kind !== 'system');
+  for (const e of logged) {
+    if (['win', 'update', 'site', 'contact'].includes(e.kind)) done.push((e.kind === 'win' ? '★ ' : '') + first(e.text));
+    if (e.kind === 'problem') decisions.push('Help needed: ' + first(e.text));
+  }
   if (slip) rag.why.schedule = [rag.why.schedule, prev ? `finish ${slip > 0 ? 'moved ' + slip + ' working days later' : 'moved ' + -slip + ' working days earlier'} since ${prev.date}` : ''].filter(Boolean).join('; ');
-  return { n, rag, done, next: next.slice(0, 15), decisions, slip, prev };
+  return { n, rag, done, next: next.slice(0, 15), decisions, slip, prev, logIds: logged.map(e => e.id) };
 }
 
 export async function saveSnapshot(snap) {
@@ -77,13 +84,14 @@ export function buildSnapshot(d, choice) {
   const { n } = d;
   return { id: 's_' + n.statusDate, date: fmt(new Date()), statusDate: n.statusDate, rag: { overall: choice.overall, schedule: choice.schedule, cost: choice.cost, scope: choice.scope, reasons: choice.reasons },
     finish: n.finish, baselineFinish: n.baselineFinish, pct: n.pct, pctExpected: n.pctExpected, milestones: n.milestones, tasks: n.tasks, ev: n.ev, postedThrough: n.postedThrough, overBudget: n.overBudget,
-    raid: n.raid, openRisks: n.openRisks, openIssues: n.openIssues, done: choice.done, next: choice.next, decisions: choice.decisions, notes: choice.notes || '', by: choice.by || 'you' };
+    raid: n.raid, openRisks: n.openRisks, openIssues: n.openIssues, logIds: d.logIds || [], done: choice.done, next: choice.next, decisions: choice.decisions, notes: choice.notes || '', by: choice.by || 'you' };
 }
 
 // ---------- Close the week ----------
 export async function closeWeekDialog(A) {
   await ensurePlanCosts().catch(() => {});
   await loadStatus(S.plan.id).catch(() => {});
+  await import('./brief.js').then(m => m.loadLog()).catch(() => {});
   const d = draft(), keys = ['overall', 'schedule', 'cost', 'scope'];
   const exists = snaps().find(x => x.id === 's_' + d.n.statusDate);
   const base = exists ? { ...exists.rag, reasons: exists.rag.reasons || {}, done: exists.done, next: exists.next, decisions: exists.decisions, notes: exists.notes } : { ...d.rag, reasons: { ...d.rag.why }, done: d.done, next: d.next, decisions: d.decisions, notes: '' };

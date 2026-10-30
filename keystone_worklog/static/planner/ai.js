@@ -5,6 +5,8 @@ import { planner as S, openPlan, change, rowIds, resourceText, moveTo, finishAt,
 import * as CU from './costui.js';
 import * as ST from './status.js';
 import * as PF from './portfolio.js';
+import * as BR from './brief.js';
+import * as R from './report.js';
 
 export const TOOLS = {
   list_plans: { d: 'List the project plans in the Plan tab (id, name, number of tasks).', p: {}, req: [] },
@@ -38,7 +40,12 @@ Object.assign(TOOLS, {
       reasons: { type: 'object', description: 'One line per colour: { overall, schedule, cost, scope }', properties: { overall: { type: 'string' }, schedule: { type: 'string' }, cost: { type: 'string' }, scope: { type: 'string' } } },
       done: { type: 'array', items: { type: 'string' } }, next: { type: 'array', items: { type: 'string' } }, decisions: { type: 'array', items: { type: 'string' } }, notes: ['string'] }, req: ['overall'] },
 });
-export const WRITE = new Set(['update_tasks', 'add_tasks', 'add_raid_item', 'close_week']);
+Object.assign(TOOLS, {
+  get_brief: { d: 'Read a plan\'s project brief (the Brief.md note in the vault: summary, background, objectives, scope, key facts, links, contacts) and its recent updates (the weekly log).', p: { plan: ['string'] }, req: [] },
+  add_log_entry: { d: 'Add an update to a plan\'s weekly log (kind: update, win, problem, decision, contact, site, lesson). internal: true keeps it out of what is shared with the sponsor. The user reviews it.',
+    p: { plan: ['string'], kind: ['string'], text: ['string'], internal: ['boolean'], tasks: { type: 'array', items: { type: 'string' }, description: 'Related task IDs or names' } }, req: ['text'] },
+});
+export const WRITE = new Set(['update_tasks', 'add_tasks', 'add_raid_item', 'close_week', 'add_log_entry']);
 
 const undos = new Map();  // undo snapshots stay in memory (they can be large); the chat keeps only the key
 
@@ -265,8 +272,26 @@ export async function run(name, args, prof = {}) {
         'By person:', ...[...per].sort((a, b) => b[1].c - a[1].c).map(([n, a]) => `- ${n}: ${Math.round(a.h * 10) / 10} h, ${M(a.c)}`),
         'By month:', ...[...months].sort().map(([k, a]) => `- ${k}: ${Math.round(a.h)} h, ${M(a.c)}`)].join('\n');
     }
+    if (name === 'get_brief') {
+      const bc = await BR.loadBrief(true), log = await BR.loadLog(true);
+      const recent = log.slice().sort((a, b) => b.at.localeCompare(a.at)).slice(0, 15).map(e => `- ${e.at.slice(0, 10)} ${e.kind}${e.internal ? ' (internal)' : ''}: ${e.text}`);
+      if (bc.noVault) return 'There is no vault connected, so there is no brief note. Recent updates:\n' + (recent.join('\n') || 'none');
+      if (bc.missing) return `“${plan.name}” has no brief yet (it would be ${bc.path}). The user can start it on Plan → Brief. Recent updates:\n` + (recent.join('\n') || 'none');
+      return [`Brief of “${plan.name}” (${bc.path}):`, bc.md.slice(0, 12000), '', 'Recent updates (newest first):', ...(recent.length ? recent : ['none'])].join('\n');
+    }
+    if (name === 'add_log_entry') {
+      const kind = String(args.kind || 'update').toLowerCase();
+      if (!BR.KINDS.some(k => k[0] === kind)) return 'Error: kind must be one of ' + BR.KINDS.map(k => k[0]).join(', ') + '.';
+      if (!String(args.text || '').trim()) return 'Error: text is required.';
+      const taskUids = (args.tasks || []).map(x => findTask(x).uid);
+      const entry = { kind, text: String(args.text).trim(), internal: !!args.internal, taskUids, by: 'assistant' };
+      return {
+        summary: `Add a ${kind} to the log – ${plan.name}`, detail: `${kind}${entry.internal ? ' (internal)' : ''}: ${entry.text}${taskUids.length ? '\nTasks ' + taskUids.map(u => ids.get(u)).join(', ') : ''}`,
+        apply: async () => { const e = await BR.addLogEntry(entry); const key = Math.random().toString(36).slice(2); undos.set(key, { kind: 'log', id: plan.id, entryId: e.id }); return { text: `Added the update to “${plan.name}”.`, undo: { key, id: plan.id } }; },
+      };
+    }
     if (name === 'status_draft') {
-      await CU.ensurePlanCosts().catch(() => {}); await ST.loadStatus(plan.id, true);
+      await CU.ensurePlanCosts().catch(() => {}); await ST.loadStatus(plan.id, true); await BR.loadLog().catch(() => {});
       const d = ST.draft(), n = d.n;
       return [`Draft status of “${plan.name}” as of ${n.statusDate}${d.prev ? ` (last status ${d.prev.statusDate}: ${d.prev.rag.overall})` : ' (first status)'}.`,
         `Suggested: overall ${d.rag.overall}; schedule ${d.rag.schedule}${d.rag.why.schedule ? ' – ' + d.rag.why.schedule : ''}; cost ${d.rag.cost}${d.rag.why.cost ? ' – ' + d.rag.why.cost : ''}; scope ${d.rag.scope}${d.rag.why.scope ? ' – ' + d.rag.why.scope : ''}`,
@@ -275,7 +300,7 @@ export async function run(name, args, prof = {}) {
         d.decisions.length ? 'Decisions or help needed:\n' + d.decisions.map(x => '- ' + x).join('\n') : ''].filter(Boolean).join('\n');
     }
     if (name === 'close_week') {
-      await CU.ensurePlanCosts().catch(() => {}); await ST.loadStatus(plan.id, true);
+      await CU.ensurePlanCosts().catch(() => {}); await ST.loadStatus(plan.id, true); await BR.loadLog().catch(() => {});
       const d = ST.draft(), ok = c => ['green', 'amber', 'red'].includes(c);
       const choice = { reasons: { ...(args.reasons || {}) }, by: 'assistant' };
       for (const k of ['overall', 'schedule', 'cost', 'scope']) choice[k] = ok(String(args[k] || '').toLowerCase()) ? String(args[k]).toLowerCase() : d.rag[k];
@@ -312,6 +337,13 @@ export async function run(name, args, prof = {}) {
 /** Undo an applied assistant change: put the plan back as it was (as a new, undoable change). */
 export async function undo(u) {
   const snap = undos.get(u.key);
+  if (snap && snap.kind === 'log') {
+    if (!S.plan || S.plan.id !== snap.id) await openPlan(snap.id);
+    const log = await BR.loadLog(true);
+    await api(`/api/plans/${snap.id}/log`, { entries: log.filter(e => e.id !== snap.entryId) }, 'PUT');
+    await BR.loadLog(true); undos.delete(u.key);
+    return;
+  }
   if (snap && snap.kind === 'status') {
     if (snap.prev) await api(`/api/plans/${snap.id}/status`, { snapshot: snap.prev }, 'PUT');
     else await api(`/api/plans/${snap.id}/status/remove`, { id: snap.snapId });

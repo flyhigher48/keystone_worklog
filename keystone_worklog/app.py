@@ -1,4 +1,5 @@
 """Keystone web server. Start it with `keystone-worklog` (or `python app.py` in a source checkout)."""
+import base64
 import hashlib
 import json
 import os
@@ -823,6 +824,8 @@ def plan_delete(pid):
     fsutil.replace(p, trash / f"{pid}-{stamp}.json")  # never deleted outright
     if status_path(pid).exists():
         fsutil.replace(status_path(pid), trash / f"{pid}-{stamp}.status.json")
+    if log_path(pid).exists():
+        fsutil.replace(log_path(pid), trash / f"{pid}-{stamp}.log.json")
     return jsonify(ok=True)
 
 
@@ -883,6 +886,81 @@ def plan_status_remove(pid):
         doc["removed"] = (doc.get("removed") or []) + [{**gone[0], "removedAt": time.strftime("%Y-%m-%dT%H:%M:%S")}]
         fsutil.write_text(status_path(pid), json.dumps(doc), mode=costs.PRIVATE)
     return jsonify(ok=True)
+
+
+# ---------- the project brief: weekly log, PowerPoint, saving shared copies into the vault ----------
+LOG_KINDS = {"update", "win", "problem", "decision", "contact", "site", "lesson", "system"}
+
+
+def log_path(pid):
+    plan_path(pid)  # validates the id
+    return PLANS_DIR / f"{pid}.log.json"
+
+
+@app.get("/api/plans/<pid>/log")
+def plan_log(pid):
+    doc = fsutil.read_json(log_path(pid), default=None) or {}
+    return jsonify(entries=doc.get("entries") or [])
+
+
+@app.put("/api/plans/<pid>/log")
+def plan_log_save(pid):
+    entries = json_body().get("entries")
+    if not isinstance(entries, list) or len(entries) > 5000:
+        abort(400, "Expected a list of log entries")
+    clean = []
+    for e in entries:
+        if not isinstance(e, dict) or not re.match(r"^l_[\w-]{1,40}$", str(e.get("id") or "")) or not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", str(e.get("at") or "")):
+            abort(400, "Each entry needs an id (l_…) and a time")
+        if e.get("kind") not in LOG_KINDS:
+            abort(400, f"Unknown kind: {e.get('kind')}")
+        clean.append({k: e[k] for k in ("id", "at", "kind", "text", "taskUids", "raid", "files", "internal", "by", "snapshot") if k in e})
+    read_plan(pid)
+    with LOCK:
+        fsutil.write_text(log_path(pid), json.dumps({"entries": clean}))
+    return jsonify(ok=True, count=len(clean))
+
+
+@app.post("/api/reports/pptx")
+def report_pptx():
+    """The brief's slides (already trimmed by "Review before sharing") as a .pptx on PowerPoint's standard layouts."""
+    body = json_body()
+    slides = body.get("slides")
+    if not isinstance(slides, list) or not slides:
+        abort(400, "No slides")
+    try:
+        from . import deck
+    except ImportError:
+        abort(400, "Making PowerPoint files needs the python-pptx package: pip install python-pptx")
+    data = deck.build(slides, body.get("images") or {})
+    name = re.sub(r"[^\w\- .()]+", "_", str(body.get("name") or "Project brief")).strip() or "Project brief"
+    return Response(data, mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.pptx"'})
+
+
+@app.post("/api/reports/save")
+def report_save():
+    """Keep a copy of a shared brief (HTML or PowerPoint) in the vault. Never overwrites: a second copy gets " (2)"."""
+    body = json_body()
+    root, p = safe_path(body.get("path"), md=False)
+    if p.suffix.lower() not in (".html", ".pptx"):
+        abort(400, "Only .html and .pptx copies are saved")
+    try:
+        data = base64.b64decode(body.get("data") or "", validate=True)
+    except ValueError:
+        abort(400, "Bad file data")
+    if not data or len(data) > MAX_UPLOAD:
+        abort(400, "The file is empty or too large")
+    with LOCK:
+        stem, n = p.stem, 2
+        while p.exists():
+            p = p.with_name(f"{stem} ({n}){p.suffix}")
+            n += 1
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(p.name + ".part")
+        tmp.write_bytes(data)
+        fsutil.replace(tmp, p)
+    return jsonify(path=p.relative_to(root).as_posix())
 
 
 # ---------- people & rates (data/people.json) and the ERP cost ledgers (data/costs/) ----------
