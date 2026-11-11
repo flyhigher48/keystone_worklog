@@ -183,6 +183,33 @@ class MSPDITest(unittest.TestCase):
         order = [msp.PROJECT_ORDER.index(c.tag) for c in root]
         self.assertEqual(order, sorted(order), [c.tag for c in root])
 
+    def test_ms_project_gets_the_same_start_dates(self):
+        """MS Project ignores <Start> for automatically scheduled tasks and rebuilds them from the project start, links and
+        constraints – so the file must carry everything that put each task where it is in Keystone."""
+        d = lambda n: {"minutes": n * 480, "format": "d"}
+        plan = {"name": "Dates", "start": "2026-11-09T08:00", "tasks": [
+            {"uid": 1, "name": "Typed start", "duration": d(3), "start": "2026-11-16T08:00", "finish": "2026-11-18T17:00", "constraint": {"type": "SNET", "date": "2026-11-16T08:00"}},
+            {"uid": 2, "name": "Linked", "duration": d(2), "start": "2026-11-19T08:00", "finish": "2026-11-20T17:00", "links": [{"pred": 1, "type": "FS", "lag": {"minutes": 0, "format": "d"}}]},
+            {"uid": 3, "name": "Manual", "manual": True, "duration": d(1), "start": "2026-11-03T08:00", "finish": "2026-11-03T17:00"},
+            {"uid": 4, "name": "Unlinked, later than the start", "duration": d(1), "start": "2026-11-09T08:00", "finish": "2026-11-09T17:00"},
+            {"uid": 5, "name": "Started", "duration": d(1), "percent": 50, "start": "2026-11-10T08:00", "finish": "2026-11-10T17:00", "actualStart": "2026-11-10T08:00"},
+        ], "resources": [], "assignments": []}
+        root = ET.fromstring(msp.to_mspdi(plan))
+        ns = {"p": msp.NS}
+        task = lambda uid: next(t for t in root.find("p:Tasks", ns) if t.findtext("p:UID", namespaces=ns) == str(uid))
+        val = lambda uid, tag: task(uid).findtext(f"p:{tag}", namespaces=ns)
+        self.assertEqual(root.findtext("p:StartDate", namespaces=ns), "2026-11-03T08:00:00")  # the earliest task, not the later plan start
+        # a manually scheduled task's dates are ManualStart/Finish/Duration in MS Project
+        self.assertEqual((val(3, "Manual"), val(3, "ManualStart"), val(3, "ManualFinish"), val(3, "ManualDuration")), ("1", "2026-11-03T08:00:00", "2026-11-03T17:00:00", "PT8H0M0S"))
+        self.assertIsNone(val(1, "ManualStart"))
+        # typed dates and links travel as they are
+        self.assertEqual((val(1, "ConstraintType"), val(1, "ConstraintDate")), ("4", "2026-11-16T08:00:00"))
+        self.assertEqual((val(2, "ConstraintType"), task(2).find("p:PredecessorLink/p:PredecessorUID", ns).text), ("0", "1"))
+        # an unlinked task later than the project start is pinned, or MS Project would pull it back to the start
+        self.assertEqual((val(4, "ConstraintType"), val(4, "ConstraintDate")), ("4", "2026-11-09T08:00:00"))
+        self.assertEqual(val(5, "ConstraintType"), "0")   # a started task keeps its actual start instead
+        self.assertNotIn("constraint", plan["tasks"][3])   # only the file is pinned, never the plan
+
     def test_durations_and_bad_files(self):
         self.assertEqual(msp.parse_duration("PT40H0M0S"), 2400)
         self.assertEqual(msp.parse_duration("P1DT2H30M0S"), 1590)

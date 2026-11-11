@@ -378,8 +378,12 @@ def to_mspdi(plan):
         _set(root, "Name", (plan.get("name") or "Plan") + ".xml", PROJECT_ORDER)
     _set(root, "Title", plan.get("name") or "Plan", PROJECT_ORDER)
     _set(root, "ScheduleFromStart", _t(root, "ScheduleFromStart") or 1, PROJECT_ORDER)
-    if plan.get("start"):
-        _set(root, "StartDate", _xtime(plan["start"]), PROJECT_ORDER)
+    # MS Project never schedules a task before the project start: start the project at the earliest task (a manually
+    # scheduled task can sit before the plan's start date in Keystone)
+    starts = [t["start"] for t in tasks if t.get("start")] + ([plan["start"]] if plan.get("start") else [])
+    project_start = min(starts) if starts else None
+    if project_start:
+        _set(root, "StartDate", _xtime(project_start), PROJECT_ORDER)
     if finishes:
         _set(root, "FinishDate", _xtime(max(finishes)), PROJECT_ORDER)
     _set(root, "MinutesPerDay", units["minutesPerDay"], PROJECT_ORDER)
@@ -406,6 +410,16 @@ def to_mspdi(plan):
     rows.append(st)
     depth, number = {}, {}
     counters = {}
+    by_uid = {t["uid"]: t for t in tasks}
+
+    def driven(t):
+        """True if links decide this task's start – its own, or a summary's above it."""
+        while t is not None:
+            if t.get("links"):
+                return True
+            t = by_uid.get(t.get("parentUid"))
+        return False
+
     for i, t in enumerate(tasks, 1):
         parent = t.get("parentUid")
         d = depth.get(parent, 0) + 1 if parent is not None else 1
@@ -417,10 +431,20 @@ def to_mspdi(plan):
         dur = t.get("duration") or {"minutes": 0, "format": "d"}
         fmt_code = FORMAT_CODES.get((dur.get("format", "d"), bool(dur.get("estimated"))), 7)
         c = t.get("constraint") or {"type": "ASAP"}
+        # MS Project recalculates every automatically scheduled task from the project start, its links and its constraint,
+        # and ignores the Start in the file. A task that starts later for any other reason would land on the project start,
+        # so pin it with Start No Earlier Than its date (in the file only – the plan isn't changed).
+        if (c.get("type", "ASAP") == "ASAP" and not t.get("manual") and not is_sum and not driven(t) and not t.get("percent")
+                and t.get("start") and project_start and t["start"][:16] > project_start[:16]):
+            c = {"type": "SNET", "date": t["start"]}
+        manual = bool(t.get("manual")) and not is_sum
         values = [("UID", t["uid"]), ("ID", i), ("Name", t.get("name", "")), ("Manual", 1 if t.get("manual") else 0),
                   ("WBS", t.get("wbs") or number[t["uid"]]), ("OutlineNumber", number[t["uid"]]), ("OutlineLevel", d),
                   ("Priority", t.get("priority", 500)), ("Start", _xtime(t.get("start"))), ("Finish", _xtime(t.get("finish"))),
-                  ("Duration", format_duration(dur.get("minutes", 0))), ("DurationFormat", fmt_code),
+                  ("Duration", format_duration(dur.get("minutes", 0))),
+                  # a manually scheduled task's dates are these three in MS Project – without them it sits at the project start
+                  ("ManualStart", _xtime(t.get("start")) if manual else None), ("ManualFinish", _xtime(t.get("finish")) if manual else None),
+                  ("ManualDuration", format_duration(dur.get("minutes", 0)) if manual else None), ("DurationFormat", fmt_code),
                   ("Estimated", 1 if dur.get("estimated") else 0), ("Milestone", 1 if (t.get("milestone") or (not is_sum and not dur.get("minutes"))) else 0),
                   ("Summary", 1 if is_sum else 0), ("PercentComplete", int(t.get("percent") or 0)),
                   ("ActualStart", _xtime(t.get("actualStart"))), ("ActualFinish", _xtime(t.get("actualFinish"))),
