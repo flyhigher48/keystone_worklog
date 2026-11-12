@@ -50,4 +50,4 @@ version = { attr = "keystone_worklog.__version__" }
 include = ["keystone_worklog*"]
 
 [tool.setuptools.package-data]
-keystone_worklog = ["static/*", "static/planner/*", "static/vendor/*", "static/vendor/katex/*", "static/vendor/katex/fonts/*"]
+keystone_worklog = ["static/*", "static/planner/*", "static/commands/*", "static/vendor/*", "static/vendor/katex/*", "static/vendor/katex/fonts/*"]

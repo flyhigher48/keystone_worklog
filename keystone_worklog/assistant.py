@@ -21,6 +21,11 @@ from pathlib import Path
 from . import documents, fsutil, vault
 
 READ_LIMIT = 20000
+GREP_MAX_FILE = 2_000_000   # notes larger than this are skipped by grep and tasks
+GREP_SECONDS = 3            # grep stops (and says so) after this long
+UNSAFE_REGEX = re.compile(r"\([^)]*[+*}][^)]*\)\s*[+*{]")  # a repeated group that itself repeats, e.g. (a+)+
+TASK_RE = re.compile(r"^(\s*[-*+]\s+)\[( |x|X)\]\s?(.*)$")  # - [ ] text / - [x] text
+DUE_RE = re.compile(r"(?:📅|due:)\s*(\d{4}-\d{2}-\d{2})")
 # common words left out of keyword search, so "when can the crew start" matches on "crew" and "start"
 STOP_WORDS = set("""a an and are as at be been but by can could did do does for from had has have how i if in into is it its
 me my no not of on or our so than that the their them then there these they this to too up us was we were what when where which
@@ -233,6 +238,7 @@ class Tools:
         self.docs = bool(docs and texts is not None)  # search documents too (Settings → AI assistant)
         self.inbox = (inbox or "Inbox").strip("/")       # the folder new files land in, to be filed
         self.capture = (capture or "Today.md").strip("/")  # the quick-capture note: a scratchpad, never a filing hint
+        self.data = None  # structured rows from the last read tool (search, grep, tasks…), for slash commands
 
     def rel(self, p):
         return p.relative_to(self.root).as_posix()
@@ -361,6 +367,7 @@ class Tools:
                         m["also"] = m["heading"]  # the keyword match is somewhere else in the file: mention both
                     m["heading"], m["text"] = r["heading"], r["text"]
         rows = sorted(merged.values(), key=lambda m: -m["score"])[:limit]
+        self.data = [{"path": m["path"], "heading": m["heading"], "text": re.sub(r"\s+", " ", m["text"])[:300]} for m in rows]
         if not rows:
             return f"Nothing in the vault matched “{query}”." + ("" if vector else " (Keyword search only – the meaning index isn't ready.)")
         out = []
@@ -637,11 +644,126 @@ class Tools:
             if m >= cutoff:
                 rows.append((m, rp))
         rows.sort(reverse=True)
+        self.data = [{"path": rp, "mtime": m} for m, rp in rows[:limit]]
         if not rows:
             return f"No notes changed in the last {days} days."
         return f"Notes changed in the last {days} days, newest first:\n" + "\n".join(
             f"- {time.strftime('%a %Y-%m-%d %H:%M', time.localtime(m))}  {rp}" + ("  (tracker note)" if rp.startswith(self.tracker + "/") else "")
             for m, rp in rows[:limit])
+
+    def _scan_paths(self, folder, docs):
+        """Vault-relative paths to scan: notes (and extracted documents with docs), skipping dot-folders and the tracker folder."""
+        base = self.resolve(folder.strip("/"), False)[1] if folder and folder.strip("/") else self.root
+        if not base.is_dir():
+            raise ToolError(f"No folder named '{folder}'")
+        inside_tracker = self.rel(base).startswith(self.tracker) if base != self.root else False
+        out = [rp for rp in vault_paths(base, self.root) if inside_tracker or not rp.startswith(self.tracker + "/")]
+        if docs and self.docs:
+            prefix = self.rel(base) + "/" if base != self.root else ""
+            out += sorted(rp for rp in documents.vault_documents(self.root) if rp.startswith(prefix))
+        return out
+
+    def _lines(self, rp):
+        """(heading, line) pairs of a note or an extracted document; None if it can't be read or is too large."""
+        p = self.root / rp
+        if rp.lower().endswith(".md"):
+            try:
+                if p.stat().st_size > GREP_MAX_FILE:
+                    return None
+                return [("", line) for line in self.read(p).split("\n")]
+            except OSError:
+                return None
+        entry = self.texts.cached(self.root, rp, p.stat().st_mtime) if self.texts else None
+        return [(sec["heading"], line) for sec in (entry or {}).get("sections", []) for line in sec["text"].split("\n")] if entry else None
+
+    def grep(self, pattern, folder="", regex=False, case=False, limit=200, docs=False):
+        """Exact text (or a regular expression) across the vault: matching lines with their line numbers."""
+        pattern = str(pattern or "")
+        if not pattern.strip():
+            raise ToolError("Give the text to look for")
+        if len(pattern) > 200:
+            raise ToolError("The pattern is too long (200 characters at most)")
+        if regex and UNSAFE_REGEX.search(pattern):
+            raise ToolError("That regular expression nests repeats like (a+)+, which can take forever; simplify it")
+        try:
+            rx = re.compile(pattern if regex else re.escape(pattern), 0 if case else re.I)
+        except re.error as e:
+            raise ToolError(f"Not a valid regular expression: {e}") from None
+        limit = max(1, min(1000, int(limit or 200)))
+        deadline, hits, files, truncated = time.monotonic() + GREP_SECONDS, [], 0, False
+        for rp in self._scan_paths(folder, docs):
+            if time.monotonic() > deadline or len(hits) >= limit:
+                truncated = True
+                break
+            lines = self._lines(rp)
+            if not lines:
+                continue
+            n = 0
+            for i, (heading, line) in enumerate(lines, 1):
+                if len(line) <= 5000 and rx.search(line):
+                    hits.append({"path": rp, "line": i, "heading": heading, "text": line.strip()[:300]})
+                    n += 1
+                    if n >= 20 or len(hits) >= limit:
+                        break
+            files += bool(n)
+        self.data = hits
+        if not hits:
+            return f"No lines match “{pattern}”" + (f" in {folder}" if folder else "") + "."
+        out, last = [f"{len(hits)} matching line{'s' if len(hits) != 1 else ''} in {files} file{'s' if files != 1 else ''}" + (" (stopped early: narrow the folder or pattern for the rest)" if truncated else "") + ":"], None
+        for hit in hits:
+            if hit["path"] != last:
+                out.append(f"{hit['path']}")
+                last = hit["path"]
+            out.append(f"  {hit['line']}: {hit['text']}")
+        return "\n".join(out)
+
+    def tasks(self, folder="", status="open", due_before=None, due_after=None, tag=None, limit=300, skip=None):
+        """Markdown checkboxes across the vault, with their due dates (📅 YYYY-MM-DD or due:YYYY-MM-DD) and #tags.
+        skip: a folder left out (the templates folder: a template's checkboxes aren't tasks)."""
+        skip = (skip or "").strip("/")
+        status = (status or "open").lower()
+        tag = (tag or "").lstrip("#").lower()
+        limit = max(1, min(1000, int(limit or 300)))
+        rows = []
+        for rp in self._scan_paths(folder, False):
+            if skip and rp.startswith(skip + "/"):
+                continue
+            lines = self._lines(rp) or []
+            fence = False
+            for i, (_, line) in enumerate(lines, 1):
+                if FENCE_RE.match(line):
+                    fence = not fence
+                    continue
+                m = None if fence else TASK_RE.match(line)
+                if not m:
+                    continue
+                done = m.group(2).lower() == "x"
+                if (status == "open" and done) or (status == "done" and not done):
+                    continue
+                text = m.group(3).strip()
+                d = DUE_RE.search(text)
+                due = d.group(1) if d else None
+                tags = [t.lower() for t in re.findall(r"(?:^|\s)#([\w\-/]+)", text)]
+                if tag and tag not in tags:
+                    continue
+                if due_before and not (due and due <= due_before):
+                    continue
+                if due_after and not (due and due >= due_after):
+                    continue
+                rows.append({"path": rp, "line": i, "raw": line, "text": text, "done": done, "due": due, "tags": tags})
+        rows.sort(key=lambda r: (r["due"] or "9999", r["path"], r["line"]))
+        rows = rows[:limit]
+        self.data = rows
+        if not rows:
+            return "No matching tasks."
+        return f"{len(rows)} task{'s' if len(rows) != 1 else ''}:\n" + "\n".join(
+            f"- [{'x' if r['done'] else ' '}] {r['text']}  ({r['path']}:{r['line']})" for r in rows)
+
+    def find_backlinks(self, path):
+        rel_path = self.rel(self.note(path))
+        hits = self.backlinks(rel_path)
+        self.data = [{"path": rp} for rp in hits]
+        return f"Notes linking to {rel_path}:\n" + "\n".join(f"- {rp}" for rp in hits) if hits else f"No notes link to {rel_path}."
 
     def list_templates(self, folder):
         tdir = self.resolve(folder.strip("/"), False)[1] if folder.strip("/") else None

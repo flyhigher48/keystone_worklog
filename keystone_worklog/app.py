@@ -702,13 +702,39 @@ def ai_tool():
             result = t.recent_notes(args.get("days", 7), args.get("limit", 30))
         elif name == "list_templates":
             result = t.list_templates(templates_folder(t.root))
+        elif name == "grep":
+            result = t.grep(args.get("pattern", ""), args.get("folder") or "", bool(args.get("regex")), bool(args.get("case")), args.get("limit") or 200, bool(args.get("documents")))
+        elif name == "tasks":
+            result = t.tasks(args.get("folder") or "", args.get("status") or "open", args.get("due_before"), args.get("due_after"), args.get("tag"), args.get("limit") or 300, templates_folder(t.root))
+        elif name == "backlinks":
+            result = t.find_backlinks(args.get("path", ""))
         else:
             raise assistant.ToolError(f"Unknown tool: {name}")
-        return jsonify(result=result)
+        return jsonify(result=result, data=t.data)
     except assistant.ToolError as e:
         return jsonify(error=str(e))
     except (TypeError, ValueError) as e:
         return jsonify(error=f"Bad arguments for {name}: {e}")
+
+
+@app.post("/api/commands/miss")
+def commands_miss():
+    """Plain text the slash commands didn't understand – only when the user turned this log on (Settings → Slash commands).
+    It stays in data/commands/ on this computer, to tune the example sentences and thresholds."""
+    body = json_body()
+    text = str(body.get("text") or "").strip()[:500]
+    if not text:
+        abort(400, "text is required")
+    ranked = [{"name": str(r.get("name", ""))[:40], "score": round(float(r.get("score") or 0), 3)} for r in (body.get("ranked") or [])[:3] if isinstance(r, dict)]
+    folder = DATA_DIR / "commands"
+    folder.mkdir(exist_ok=True)
+    f = folder / "misses.jsonl"
+    with LOCK:
+        if f.exists() and f.stat().st_size > 1_000_000:  # keep one older file, never grow without bound
+            f.replace(folder / "misses.old.jsonl")
+        with open(f, "a", encoding="utf-8") as out:
+            out.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "text": text, "kind": str(body.get("kind") or "")[:20], "ranked": ranked}) + "\n")
+    return jsonify(ok=True)
 
 
 # ---------- filing: the inbox review table (works without an AI model) ----------

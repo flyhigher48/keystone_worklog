@@ -625,6 +625,79 @@ The menu also opens with the keyboard (the Menu key or `Shift+F10`). Use `↑ �
 - **Filled in when the note is created:** `{{title}}`, `{{date}}` and `{{time}}`. Custom formats like `{{date:dddd, MMMM D, YYYY}}` or `{{time:h:mm A}}` work too, using the same tokens and default formats as Obsidian. Templater plugin syntax (`<% … %>`) is not run.
 - **Starter templates:** **Add starter templates** (in Settings, or in the menu when the folder is empty) adds *Meeting notes*, *Project brief*, *Daily log* and *Calculation* (which includes a LaTeX example). Existing files with the same names are never overwritten.
 
+## Slash commands (no AI model needed)
+
+Type `/` in the assistant box, in the command palette (`Ctrl+K`) or in quick capture (`Ctrl+Shift+Space`) to do Keystone's everyday actions directly. They need no AI model and work offline. They use the assistant's tools, so every change gets the same preview, **Undo** and git commit. The full list, with examples, is in **[COMMANDS.md](COMMANDS.md)**. In the app, `/help` shows it and `/help log` explains one command. New to commands? **[Keystone without an AI model](WITHOUT-AI.md)** walks through a whole day with screenshots.
+
+Without a model, the buttons that would ask the assistant run the matching command instead:
+- **Brief me** runs `/briefme`.
+- **Weekly status report** runs `/weekly`.
+- **File with Keystone** opens the `/file-today` table.
+- **Draft reply** gives you a reply skeleton.
+- **Log my day** starts a `/log` command for you to finish.
+
+| To… | Type |
+| --- | --- |
+| Add a timestamped line or a todo to `Today.md` | `/note Called the county #bridge` · `/todo Send the photos due:fri` |
+| Tick, untick, or carry over todos | `/done 3` · `/done photos` · `/undone 3` · `/carry` |
+| See a day in `Today.md`, or file it | `/today` · `/today yesterday` · `/file-today` |
+| Log hours | `/log 2h #bridge` · `/log 2h #bridge, 1.5h #cr12 yesterday` · `/log 8h #bridge mon..fri` · `/log day #bridge` · `/log day 60% #bridge 40% #cr12` · `/log day usual` |
+| See hours, leave, budgets | `/hours week` · `/left` · `/leave` · `/budget` · `/briefme` |
+| Board cards and follow-ups | `/card Pad memo #bridge due:fri` · `/card pad memo done` · `/cards overdue` · `/fu Maria – Submittal due:+2d` · `/fus overdue` |
+| Notes | `/find bearing` · `/grep TBD in:Projects` · `/open load check` · `/new "Memo" tpl:Memo` · `/meeting #bridge` · `/append today :: text` · `/move "x" to Folder` · `/actions` · `/related` · `/backlinks` · `/todos overdue` |
+| Plans | `/task 12 50%` · `/task 12 +2d` · `/addtask "Pad design" 3d after:7` · `/milestone "60% plans" dec 12` · `/risk …` · `/late` · `/whatif 12 +5d` · `/status` · `/close-week amber reason:"…"` · `/update win …` |
+| Reports | `/briefme` (a briefing card) · `/weekly` (writes `Reports/Weekly status <date>.md`) |
+
+**Typing them.**
+- **Autocomplete:** a list pops up as you type the command name, `#` (projects), `@` (people), `[[` (notes), `plan:`, `status:`, `tpl:`, `in:` and `code:`. `Tab` accepts a suggestion.
+- **Preview line:** the line under the box says what will happen, or what's wrong, before you press `Enter`. For example "→ Tue Nov 10 · Girder Bridge rehab · RG: 5 → 7 h", or "⚠ “bridge” matches 2 projects", with a button for each.
+- **History:** `↑`/`↓` bring back earlier commands.
+- **Names are never guessed:** when a name fits more than one thing, you choose.
+
+**Dates, hours and names.**
+- **Dates:** `today`, `yesterday`, `mon`…`sun`, `last fri`, `next mon`, `+3d`, `nov 3`, `11/3`, `2026-11-03`.
+- **Ranges:** `mon..fri`, `this week`, `last period`.
+- **Hours:** `2h`, `1.5h`, `90m`, `2:30`.
+- **Projects:** `#` and any part of the name, or its network number.
+- **Notes:** `[[Name]]`, `"Name"`, `today` or `this` (the open note).
+
+**Several at once.**
+- **Chains:** separate commands with `;`, a new line, or `then`.
+  - Every command is checked before anything runs, so a typo in the third stops the first from writing.
+  - You approve the whole set once, it runs in order, and it stops at the first problem.
+  - **Undo all** reverses everything it did.
+- **Bulk changes** use `->`: `/cards overdue -> due:+7d`, `/fus today -> due:tomorrow`, `/todos overdue -> done`, `/tasks late -> +2d`. You always see every item with a tick box first.
+- **Pipes** pass a list on: `/find bearing | append today`, `/actions this | todo`.
+- **`$`** stands for what the previous command made: `/new "Pad memo" ; /append $ :: Started`.
+
+**Routines** are saved lists of commands, edited in **Settings → Slash commands**.
+- **Running them:** with `/name`, from the palette, or with the buttons on the Today page.
+- **Defaults:**
+  - `/start`: carry yesterday's open todos to today, then brief me.
+  - `/eod`: fill what's left of today from your usual pay period, then show today.
+  - `/monday`: write last week's status note, then list the cards due this week and the overdue replies.
+- **Arguments:** `{1}` is the first word typed after the routine name. `{1|usual}` gives it a default.
+- **Optional lines:** a line starting with `?` is skipped when it doesn't apply, for example when there's nothing to carry.
+
+**Filing `Today.md` (`/file-today`)** opens a table of the day's lines. Each line goes to one place:
+- **Tagged with a project:** the line goes to that project's note, under a `## Log` heading. The heading name is a setting.
+- **Todos with a project or a date:** they become Board cards.
+- **`Reply to …` lines:** they become follow-ups.
+- **Untagged lines:** they stay where they are, unless you pick a note. Notes similar in meaning are offered.
+
+Each filed line gets `→ [[where it went]]` in `Today.md`, so it isn't filed twice.
+
+**Plain text without a slash.**
+- **Rules first:** Keystone tries its rules, so "log 2 hours to culvert yesterday" becomes `/log 2h #culvert yesterday`. A look-up like "brief me" or "what's overdue?" runs straight away. A change is shown as a command to click, or to edit first.
+- **Without an AI model:** text that no rule catches is compared, using the in-browser search model, with example sentences for each command. You're offered the closest commands, and nothing runs by itself.
+- **With a model:** text that no rule catches goes to the model. Set **Plain text** to *Always the model* to skip the rules.
+- **`/why <text>`** shows how a sentence is understood.
+- **Miss log (optional):** Keystone can keep a log of text it didn't understand, in `data/commands/misses.jsonl`. It stays on your computer and helps improve the example sentences.
+
+**Settings → Slash commands:**
+- **Ask before changes:** every change (the default), only several or bulk changes, or never. Bulk changes always ask, and lines added to `Today.md` always go straight in, with Undo.
+- **Plain text**, **run look-ups straight away**, **heading for filed lines**, the **miss log** and the **routines**.
+
 ## AI assistant: Ask Keystone
 
 Open it beside **any page** with the **✦ Ask** button in the top bar or `Ctrl+J`. It stays open, with the same conversation, as you switch tabs. The **Assistant** tab shows the same chat full width, with your chat history.
@@ -822,13 +895,14 @@ No extra packages are needed. The Python tests use `unittest`, and the JavaScrip
 
 ```bash
 python -m unittest discover -s tests -v     # API, vault export and sync, assistant tools, capture, chat proxy, index, documents, filing, MS Project XML, plans, ERP costs
-node --test tests/js/*.test.mjs             # holidays, schedules, pay-period check, burn rate, capture, emails, leave, timer, calendar import, plan scheduling, costs and earned value
+node --test tests/js/*.test.mjs             # holidays, schedules, pay-period check, burn rate, capture, emails, leave, timer, calendar import, plan scheduling, costs and earned value, slash commands
 ```
 
 - **Isolation:** each Python test gets its own temporary data folder and vault (through `KEYSTONE_DATA_DIR`), so tests never touch your own `data/`.
 - **The chat proxy** is tested against a small OpenAI-compatible mock server (`tests/mock_llm.py`). No API key or network is needed.
 - **Skipped when missing:** tests that need Git, LanceDB or the document packages are skipped if those aren't installed.
 - **JavaScript tests** load the script from `static/index.html` into a sandbox (`tests/js/load_app.mjs`) and call the real functions.
+- **Slash commands** are tested on their own (`tests/js/commands.*.test.mjs`) with a fake context (`tests/js/commands_ctx.mjs`). A golden table lists what each command turns into. After changing a command's help or examples, run `node scripts/commands_doc.mjs` to regenerate `docs/COMMANDS.md`.
 - **Continuous integration:** `.github/workflows/tests.yml` runs both suites on Linux, Windows and macOS. It also builds the package, checks it with `twine check`, and starts the installed command.
 
 ## Releasing (maintainers)

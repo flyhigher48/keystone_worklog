@@ -409,7 +409,23 @@ body.docked .shell>.wrap{min-width:0;width:100%;padding-right:12px}
 .ai-row{display:flex;align-items:center;gap:8px;min-width:0}
 .ai-row .chip{cursor:pointer;flex:none} .chip.on{background:var(--accent-soft);color:var(--accent)}
 .ai-idx{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:auto}
-.ai-compose{display:flex;gap:8px;align-items:flex-end}
+.ai-compose{display:flex;gap:8px;align-items:flex-end;position:relative}
+.cmd-pop{position:absolute;left:0;right:46px;bottom:calc(100% + 6px);max-height:260px;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.14);padding:4px;z-index:30}
+.cmd-sig{font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);padding:5px 8px;border-bottom:1px solid var(--line2);margin-bottom:2px;white-space:normal}
+.cmd-item{display:flex;gap:10px;align-items:baseline;width:100%;border:0;background:none;text-align:left;padding:6px 8px;border-radius:7px;cursor:pointer;color:var(--ink);font:inherit;font-size:12.5px;min-width:0}
+.cmd-item b{font-weight:600;white-space:nowrap} .cmd-item .sub{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmd-item.on{background:var(--accent-soft);color:var(--accent)}
+.cmd-hint{font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:0;overflow-wrap:anywhere}
+.cmd-hint:empty{display:none} .cmd-hint.bad{color:var(--bad)} .cmd-hint .chip{cursor:pointer}
+.ai-card.cmd{padding-bottom:2px} .ai-card.cmd .ai-card-f{flex-wrap:wrap} .ai-card.cmd .ai-card-h{flex-wrap:nowrap;align-items:flex-start} .ai-card.cmd .ai-card-h svg{flex:none;margin-top:2px} .ai-card.cmd .ai-card-h b{min-width:0;overflow-wrap:anywhere} .ai-card.cmd.error{border-color:var(--bad);background:var(--bad-soft)}
+.ai-card.cmd .cmd-md{padding:2px 12px 8px;font-size:12.5px;overflow-x:auto} .ai-card.cmd .cmd-md table{font-size:12px}
+.ai-card.cmd pre.ai-out{margin:0 12px 8px;max-height:320px}
+.cmd-rows{display:flex;flex-direction:column;gap:4px;padding:2px 12px 8px}
+.cmd-row{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;cursor:pointer;white-space:pre-wrap;overflow-wrap:anywhere} .cmd-row input{flex:none;margin-top:2px}
+.cmd-choices{display:flex;flex-direction:column;gap:6px;padding:0 12px 10px}
+.cmd-choice{display:flex;gap:4px;align-items:center;min-width:0} .cmd-run{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;text-align:left;overflow-wrap:anywhere;white-space:normal}
+.cmd-note{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;cursor:default}
+.routine-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0} .routine-row .sub{margin-right:4px}
 .ai-compose textarea{resize:none;min-height:40px;max-height:160px;line-height:1.45}
 .ai-send{flex:none;width:38px;height:38px;border-radius:10px;border:0;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;cursor:pointer}
 .ai-send svg{width:17px;height:17px} .ai-send.stop{background:var(--bad);color:#fff}
@@ -695,7 +711,7 @@ dialog.palette{width:min(640px,calc(100vw - 32px));padding:0;margin-top:12vh}
 .pal-item{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;text-align:left;padding:8px 10px;border-radius:8px;cursor:pointer;color:var(--ink);font:inherit;min-width:0}
 .pal-item.on{background:var(--accent-soft);color:var(--accent)}
 .pal-item svg{width:15px;height:15px;flex:none;opacity:.8}
-.pal-item .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pal-item .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;max-width:60%}
 .pal-item .sub{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .pal-item .kind{margin-left:auto;font-size:11px;color:var(--muted);flex:none}
 .pal-f{display:flex;gap:14px;padding:8px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)} .pal-f kbd{margin-right:2px}
@@ -1458,6 +1474,7 @@ function viewSettings() {
       h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => { loadPeriod(todayStart()); render(); toast('Settings applied'); } }, 'Apply'))),
     peopleRatesCard(),
     vaultCard(),
+    commandsCard(),
     aiCard(),
     indexCard(),
     notifyBackupCard(),
@@ -1469,6 +1486,56 @@ function viewSettings() {
         h('button', { class: 'btn', onclick: () => file.click() }, icon('up'), 'Restore from backup'), file)));
 }
 
+function cmdPaletteItems(q) {  // the palette after a "/": run the line, or pick a command to fill in
+  const out = [{ kind: 'Run', label: q, sub: 'Enter runs it in the assistant panel', icon: 'spark', run: () => runCommand(q, { from: 'palette' }) }];
+  const M = cmdModsSync, typed = q.slice(1).toLowerCase();
+  if (M && !/\s/.test(q)) M.registry.all(cmdCtx()).filter(c => c.name.startsWith(typed) || (c.aliases || []).some(a => a.startsWith(typed)))
+    .slice(0, 20).forEach(c => out.push({ kind: 'Command', label: '/' + c.name, sub: c.help, icon: 'right', fill: '/' + c.name + ' ' }));
+  return out;
+}
+/* Settings → Commands: how slash commands ask before changing things, plain text, and routines */
+const routinesText = r => Object.entries(r).map(([k, v]) => `${k}: ${v.label || ''}\n${v.lines.join('\n')}`).join('\n\n');
+function parseRoutines(text) {
+  const out = {}, bad = [];
+  for (const block of String(text).split(/\n\s*\n/).map(b => b.trim()).filter(Boolean)) {
+    const [head, ...lines] = block.split('\n').map(l => l.trim()).filter(Boolean);
+    const m = head.match(/^\/?([a-z][\w-]*)\s*:\s*(.*)$/i);
+    if (!m) { bad.push(head); continue; }
+    const cmds = lines.filter(l => /^\??\//.test(l));
+    if (!cmds.length || cmds.length !== lines.length) { bad.push(m[1]); continue; }
+    out[m[1].toLowerCase()] = { label: m[2].trim(), lines: cmds };
+  }
+  return { routines: out, bad };
+}
+function commandsCard() {
+  const c = cmdSettings();
+  const set = patch => { state.settings.commands = { ...cmdSettings(), ...patch }; save(); };
+  const sel = (key, opts) => { const x = h('select', { onchange: e => set({ [key]: e.target.value }) }, opts.map(([v, l]) => h('option', { value: v }, l))); x.value = c[key]; return x; };
+  const chk = (key, label) => h('label', { class: 'sw' }, h('input', { type: 'checkbox', checked: c[key] || null, onchange: e => set({ [key]: e.target.checked }) }), label);
+  const ta = h('textarea', { rows: 9, spellcheck: 'false', class: 'mono', value: routinesText(routines()) });
+  const msg = h('small', {});
+  return h('section', { class: 'card', id: 'commands-card' },
+    h('div', { class: 'card-h' }, h('h2', {}, 'Slash commands'), h('span', { class: 'sub' }, 'Type / in the assistant box, the palette (Ctrl+K) or quick capture')),
+    h('p', { class: 'hint' }, 'Commands do Keystone\'s everyday actions without an AI model: /log 2h #bridge, /todo …, /done 3, /find …, /cards overdue -> due:+7d, /task 12 50%. /help lists them all. They use the same previews, undo and git commits as the assistant.'),
+    h('div', { class: 'form' },
+      h('div', {}, h('label', {}, 'Ask before changes'), sel('confirm', [['writes', 'Every change'], ['bulk', 'Only several or bulk changes'], ['never', 'Never (bulk changes still ask)']]),
+        h('small', {}, 'Lines added to Today.md go straight in, with Undo.')),
+      h('div', {}, h('label', {}, 'Plain text in the assistant box'), sel('plainText', [['commands', 'Try commands first, then the model'], ['llm', 'Always the model (when there is one)']]),
+        h('small', {}, 'Without a model, plain text is always matched to commands.')),
+      h('div', {}, h('label', {}, 'Heading for filed lines'), h('input', { value: c.fileHeading, oninput: e => set({ fileHeading: e.target.value.trim() || 'Log' }) }),
+        h('small', {}, '/file-today adds a project\'s lines under this heading in its note.'))),
+    h('div', { class: 'row-acts', style: 'flex-wrap:wrap;gap:14px' }, chk('runReads', 'Run look-ups from plain text straight away (never changes)'), chk('missLog', 'Keep a log of plain text that wasn\'t understood (data/commands/misses.jsonl, stays on this computer)')),
+    h('h3', { style: 'margin:14px 0 4px' }, 'Routines'),
+    h('p', { class: 'hint', style: 'margin:0 0 6px' }, 'Each routine: a "name: Label" line, then one command per line; a blank line between routines. {1} is the first word you type after it ({1|usual} has a default). Start a line with ? to skip it when it doesn\'t apply. Run one with /name, from the palette, or the buttons on Today.'),
+    ta, msg,
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn', onclick: () => { ta.value = routinesText(DEFAULT_ROUTINES); } }, 'Defaults'),
+      h('button', { class: 'btn primary', onclick: () => {
+        const r = parseRoutines(ta.value);
+        if (r.bad.length) { msg.className = 'neg'; msg.textContent = `Not saved – check: ${r.bad.join(', ')} (a "name: Label" line, then lines starting with /)`; return; }
+        state.settings.routines = r.routines; save(); msg.className = ''; msg.textContent = `Saved ${Object.keys(r.routines).length} routine(s).`;
+      } }, 'Save routines')));
+}
 function peopleRatesCard() {  // lives in /static/planner/costui.js; loaded with the planner
   const host = h('section', { class: 'card', id: 'people-rates' }, h('div', { class: 'card-h' }, h('h2', {}, 'People & rates')), h('p', { class: 'hint' }, 'Loading…'));
   loadPlanner().then(m => {
@@ -1562,6 +1629,7 @@ function captureLine(c, extra = '') {
   return `- [ ] ${what}${link}${due}${extra}`;
 }
 async function doCapture(raw) {
+  if (String(raw || '').trim().startsWith('/')) return runCommand(String(raw).trim(), { from: 'capture' });
   const c = parseCapture(raw);
   if (!c.text) return;
   let extra = '', done = '';
@@ -1577,13 +1645,24 @@ async function doCapture(raw) {
   const path = await captureAppend(captureLine(c, extra));
   toast(`${done ? done + ' · ' : ''}Captured to ${baseName(path).replace(/\.md$/i, '')}`);
 }
-const CAPTURE_HINT = 'Capture…   [] todo · @task card · @reply Name – subject · due:fri · #project';
+const CAPTURE_HINT = 'Capture…   [] todo · @task card · @reply Name – subject · due:fri · #project · / for commands';
 function openCapture(prefill = '') {
   if (document.querySelector('dialog.capture')) return;
   const input = h('input', { placeholder: CAPTURE_HINT, 'aria-label': 'Quick capture', value: prefill });
   const hint = h('div', { class: 'cap-hint' });
-  let path = '';
-  const upd = () => { hint.textContent = describeCapture(parseCapture(input.value), path); };
+  let path = '', seq = 0, timer = 0;
+  const upd = () => {
+    const v = input.value.trim(), n = ++seq;
+    clearTimeout(timer);
+    if (!v.startsWith('/')) { hint.textContent = describeCapture(parseCapture(input.value), path); return; }
+    // a slash command: show what it will do (or what's wrong), the same line the assistant box shows
+    if (v.length < 2) { hint.textContent = 'A slash command: Enter runs it in the assistant panel (/help lists them)'; return; }
+    timer = setTimeout(async () => {
+      let r;
+      try { r = await (await loadCommands()).ui.previewLine(v, cmdCtx()); } catch (e) { r = { error: e.message }; }
+      if (n === seq) hint.textContent = r.error ? '⚠ ' + r.error : '→ ' + r.text + ' (Enter runs it in the assistant panel)';
+    }, 200);
+  };
   if (state.settings.vaultPath) path = captureFile();
   const dlg = h('dialog', { class: 'dlg palette capture', onclose: () => dlg.remove() }, input, hint,
     h('div', { class: 'pal-f' }, h('span', {}, h('kbd', {}, 'Enter'), ' save'), h('span', {}, h('kbd', {}, 'Esc'), ' close'), h('span', {}, h('kbd', {}, 'Ctrl'), h('kbd', {}, 'Shift'), h('kbd', {}, 'Space'), ' from anywhere')));
@@ -1619,9 +1698,14 @@ function dailyCard() {
   setTimeout(refreshDailyCard);  // after the card is on the page
   return h('section', { class: 'card' },
     h('div', { class: 'card-h' }, h('h2', {}, "Today's note"), h('span', { class: 'sub', title: `${captureFile()} › ${dayHeading()}` }, fmtMoment(new Date(), 'ddd, MMM D')), h('div', { class: 'spacer' }),
-      h('button', { class: 'btn ghost', title: "Let Keystone file today's captures into project notes, the Board and Follow-ups", onclick: () => askKeystone(PROMPTS.fileInbox(captureFile(), dayHeading())) }, icon('spark'), 'File with Keystone'),
+      h('button', { class: 'btn ghost', title: "Let Keystone file today's captures into project notes, the Board and Follow-ups", onclick: () => askKeystone(PROMPTS.fileInbox(captureFile(), dayHeading()), '/file-today') }, icon('spark'), 'File with Keystone'),
       h('button', { class: 'btn ghost', onclick: openDaily }, icon('file'), 'Open')),
-    input, dailyBox);
+    input, routineRow(), dailyBox);
+}
+function routineRow() {
+  const r = Object.entries(routines());
+  return r.length ? h('div', { class: 'routine-row' }, h('span', { class: 'sub' }, 'Routines'),
+    r.map(([k, v]) => h('button', { class: 'btn soft', title: v.lines.join(' ; '), onclick: () => runCommand('/' + k, { from: 'today' }) }, icon('repeat'), v.label || k))) : null;
 }
 
 /* ---------- follow-ups (emails to answer) ---------- */
@@ -1764,7 +1848,7 @@ function openFollowup(f, preset = {}) {
         h('button', { type: 'submit', class: 'btn primary' }, isNew ? 'Add' : 'Save'))));
   document.body.append(dlg); dlg.showModal(); (isNew && !d.subject ? subject : notes).focus();
 }
-function draftReply(f) { askKeystone(PROMPTS.reply(f)); }
+function draftReply(f) { askKeystone(PROMPTS.reply(f), f.subject ? `/reply "${f.subject.replace(/"/g, '')}"` : ''); }
 function setFollowup(f, patch, msg) { Object.assign(f, patch); save(); render(); if (msg) toast(msg); }
 
 function viewFollowups() {
@@ -2094,10 +2178,12 @@ setInterval(tickTimer, 15000);
 document.getElementById('timer-chip').onclick = () => { view.tab = 'today'; render(); };
 
 /* ---------- prompts for Keystone ---------- */
-async function askKeystone(text) {
+/** Sends a prompt to the assistant model. cmd: the slash command that does the same job, run instead when there is no model. */
+async function askKeystone(text, cmd) {
   if (view.tab !== 'assistant' && !A.open) toggleAI(true);
   await loadAI();
   if (A.busy) return toast('Keystone is still answering – wait or press Stop');
+  if (cmd && !aiProfile()) return runCommand(cmd, { from: 'button' });
   aiSend(text);
 }
 const PROMPTS = {
@@ -2155,7 +2241,13 @@ function viewToday() {
   // log my day → Keystone
   const log = h('textarea', { rows: 3, placeholder: 'e.g. Girder load check all morning, county call 1–2, then drainage memo review' });
   const logCard = h('section', { class: 'card' }, h('div', { class: 'card-h' }, h('h2', {}, 'Log my day'), h('span', { class: 'sub' }, 'Keystone turns it into timesheet hours for you to approve')),
-    log, h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => { if (!log.value.trim()) return log.focus(); askKeystone(PROMPTS.logDay(log.value.trim(), today)); log.value = ''; } }, icon('spark'), 'Turn into hours')));
+    log, h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: async () => {
+      if (!log.value.trim()) return log.focus();
+      await loadAI();
+      // free text needs a model; without one, start the command and keep what was typed
+      if (!aiProfile()) { fillComposer('/log '); return toast('Without an assistant model, log it as a command: /log 2h #project, or /log day 60% #a 40% #b'); }
+      askKeystone(PROMPTS.logDay(log.value.trim(), today)); log.value = '';
+    } }, icon('spark'), 'Turn into hours')));
 
   // due soon
   const soon = [...state.deliverables.filter(d => d.status !== 'done' && d.due && d.due <= addDays(today, 7)),
@@ -2203,8 +2295,8 @@ function viewToday() {
     h('div', { class: 'periodbar' },
       h('div', {}, h('div', { class: 'when' }, fmtMoment(now, 'dddd, MMMM D, YYYY')), h('h1', {}, hello)),
       h('div', { class: 'spacer' }),
-      h('button', { class: 'btn soft', onclick: () => askKeystone(PROMPTS.brief()) }, icon('spark'), 'Brief me'),
-      h('button', { class: 'btn', onclick: () => askKeystone(PROMPTS.weekly()) }, icon('file'), 'Weekly status report'),
+      h('button', { class: 'btn soft', onclick: () => askKeystone(PROMPTS.brief(), '/briefme') }, icon('spark'), 'Brief me'),
+      h('button', { class: 'btn', onclick: () => askKeystone(PROMPTS.weekly(), '/weekly') }, icon('file'), 'Weekly status report'),
       h('button', { class: 'btn ghost', title: 'Search and commands (Ctrl+K)', onclick: openPalette }, icon('search'), 'Ctrl K')),
     banner,
     h('div', { class: 'tiles' },
@@ -2425,7 +2517,7 @@ function viewReports() {
   return h('div', {},
     h('div', { class: 'periodbar' }, h('div', {}, h('div', { class: 'when' }, 'Reports'), h('h1', {}, 'Budgets, leave and hours')), h('div', { class: 'spacer' }),
       h('button', { class: 'btn', title: 'Print this page, or choose “Save as PDF” in the print dialog', onclick: printReports }, icon('print'), 'Print / PDF'),
-      h('button', { class: 'btn soft', onclick: () => askKeystone(PROMPTS.weekly()) }, icon('spark'), 'Weekly status report')),
+      h('button', { class: 'btn soft', onclick: () => askKeystone(PROMPTS.weekly(), '/weekly') }, icon('spark'), 'Weekly status report')),
     h('div', { class: 'print-only' }, `Keystone report · ${fmtMoment(new Date(), 'MMMM D, YYYY')}`),
     h('h3', { class: 'sec' }, 'Budget burn-down'),
     burnSection,
@@ -3067,9 +3159,11 @@ function paletteItems() {
   act('Add follow-up', () => openFollowup(null, { due: addDays(fmt(new Date()), 2) }), 'plus');
   act('Log my day…', () => { view.tab = 'today'; render(); setTimeout(() => { const t = document.querySelector('.today-grid textarea'); t && t.focus(); }, 50); }, 'edit');
   act('Ask Keystone', () => toggleAI(true));
+  act('Slash commands', () => fillComposer('/'), 'spark', 'Type / in the palette or the assistant box: work without an AI model');
+  Object.entries(routines()).forEach(([k, v]) => act(`Routine: ${v.label || k}`, () => runCommand('/' + k, { from: 'palette' }), 'repeat', v.lines.join(' ; ')));
   act(isDark() ? 'Switch to light mode' : 'Switch to dark mode', () => setTheme(isDark() ? 'light' : 'dark'), isDark() ? 'sun' : 'moon');
-  act('Brief me on today', () => askKeystone(PROMPTS.brief()));
-  act('Write my weekly status report', () => askKeystone(PROMPTS.weekly()), 'file');
+  act('Brief me on today', () => askKeystone(PROMPTS.brief(), '/briefme'));
+  act('Write my weekly status report', () => askKeystone(PROMPTS.weekly(), '/weekly'), 'file');
   act('Check this pay period', () => { loadPeriod(todayStart()); view.tab = 'timesheet'; render(); }, 'search');
   act('Previous pay period', () => { loadPeriod(addDays(view.start, -PERIOD_LEN)); view.tab = 'timesheet'; render(); }, 'left');
   act('Next pay period', () => { loadPeriod(addDays(view.start, PERIOD_LEN)); view.tab = 'timesheet'; render(); }, 'right');
@@ -3092,6 +3186,7 @@ function openPalette() {
   const input = h('input', { placeholder: 'Search notes, projects and cards, or type a command…', 'aria-label': 'Search' });
   const list = h('div', { class: 'pal-list', role: 'listbox' });
   const rank = q => {
+    if (q.startsWith('/')) return cmdPaletteItems(q);
     if (!q) return base.filter(i => i.kind !== 'Note' && i.kind !== 'Card' && i.kind !== 'Project');
     const toks = q.toLowerCase().split(/\s+/).filter(Boolean);
     return base.map(i => {
@@ -3108,7 +3203,7 @@ function openPalette() {
   const update = () => { shown = rank(input.value.trim()).slice(0, 40); sel = 0; draw(); };
   const dlg = h('dialog', { class: 'dlg palette', onclose: () => dlg.remove() }, input, list,
     h('div', { class: 'pal-f' }, h('span', {}, h('kbd', {}, '↑'), h('kbd', {}, '↓'), ' move'), h('span', {}, h('kbd', {}, 'Enter'), ' open'), h('span', {}, h('kbd', {}, 'Esc'), ' close')));
-  const choose = k => { const it = shown[k]; if (!it) return; dlg.close(); it.run(); };
+  const choose = k => { const it = shown[k]; if (!it) return; if (it.fill) { input.value = it.fill; input.focus(); update(); return; } dlg.close(); it.run(); };
   input.oninput = update;
   input.onkeydown = e => {
     if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, shown.length - 1); draw(); }
@@ -3117,6 +3212,7 @@ function openPalette() {
   };
   dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
   document.body.append(dlg); dlg.showModal(); input.focus(); update();
+  loadCommands().then(() => { if (input.value.startsWith('/')) update(); }).catch(() => {});
   if (state.settings.vaultPath && !N.tree) loadTree().then(() => { base = paletteItems(); if (input.value) update(); });
 }
 document.addEventListener('keydown', e => {
@@ -4043,6 +4139,11 @@ const AI_TOOLS = {
   add_followup: { tracker: true, d: 'Add a follow-up for an email the user has to answer. The user reviews it.', p: { from: ['string'], subject: ['string'], due: ['string', 'Reply-by date YYYY-MM-DD'], project: ['string', 'Project name'], notes: ['string', 'What to say or find out'] }, req: ['subject'] },
   update_followup: { tracker: true, d: 'Change a follow-up: status (open, waiting, done), reply-by date, notes, subject or project. Use the id from list_followups. The user reviews it.',
     p: { id: ['string'], status: ['string', 'open, waiting or done'], due: ['string', 'YYYY-MM-DD, or empty to clear'], notes: ['string'], subject: ['string'], project: ['string'] }, req: ['id'] },
+  grep: { d: 'Find exact text (or a regular expression with regex: true) in the notes, line by line, with line numbers. Better than search_notes for codes, IDs, exact phrases and "every line that says X". Skips the tracker folder unless asked.',
+    p: { pattern: ['string', 'Text to find (literal unless regex is true)'], folder: ['string', 'Optional folder'], regex: ['boolean'], case: ['boolean', 'Match upper/lower case exactly'], documents: ['boolean', 'Also search extracted document text'] }, req: ['pattern'] },
+  tasks: { d: 'Markdown checkboxes across the vault with their due dates (📅 YYYY-MM-DD or due:YYYY-MM-DD) and #tags, soonest first.',
+    p: { folder: ['string'], status: ['string', 'open (default), done or all'], due_before: ['string', 'YYYY-MM-DD'], due_after: ['string', 'YYYY-MM-DD'], tag: ['string', 'Only tasks with this #tag'] }, req: [] },
+  backlinks: { d: 'Notes that link to a note.', p: { path: ['string', 'Vault-relative path of the note'] }, req: ['path'] },
   update_deliverable: { tracker: true, d: "Change an existing deliverable card on the Board: its title, project, status, due date or notes. Pass only the fields to change. Use the card's id from tracker_summary. The user reviews it.",
     p: { id: ['string', 'Deliverable id from tracker_summary'], title: ['string'], project: ['string', 'Project name from tracker_summary'], status: ['string', 'todo, doing, blocked or done'],
       due: ['string', 'YYYY-MM-DD, or an empty string to remove the due date'], notes: ['string'] }, req: ['id'] },
@@ -4114,7 +4215,7 @@ async function addDeliverableTool(args, step) {
   Object.assign(step, { state: 'pending', preview: { kind: 'deliverable', summary: `Add deliverable “${d.title}”`,
     detail: `Project: ${p ? projectLabel(p) : 'none'} · ${STAGES.find(s => s[0] === status)[1]}${due ? ' · due ' + due : ''}` } });
   updateItem(step);
-  if (!(A.settings.autoApply || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected adding this deliverable.'; }
+  if (!(autoOK() || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected adding this deliverable.'; }
   state.deliverables.push(d); boardChanged();
   Object.assign(step, { state: 'applied', dlUndo: { id: d.id, before: null } }); updateItem(step);
   return `Added deliverable “${d.title}” (id ${d.id})${p ? ' to ' + projectLabel(p) : ''} (${status}${due ? ', due ' + due : ''}).`;
@@ -4152,7 +4253,7 @@ async function updateTimesheetTool(args, step) {
   const { work, lines, totals } = plan;
   Object.assign(step, { state: 'pending', preview: { kind: 'timesheet', summary: `Update timesheet (${lines.length} entr${lines.length > 1 ? 'ies' : 'y'})`, detail: [...lines, ...totals].join('\n') } });
   updateItem(step);
-  if (!(A.settings.autoApply || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected these timesheet changes.'; }
+  if (!(autoOK() || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected these timesheet changes.'; }
   const before = commitHours(work);
   Object.assign(step, { state: 'applied', tsUndo: before }); updateItem(step);
   return `Timesheet updated:\n${lines.join('\n')}\n${totals.join('\n')}`;
@@ -4172,7 +4273,7 @@ async function addFollowupTool(args, step) {
   const due = isoDate(args.due) ? args.due.trim() : '';
   Object.assign(step, { state: 'pending', preview: { kind: 'followup', summary: `Add follow-up “${subject}”`, detail: `From: ${from || '—'} · ${due ? 'reply by ' + due : 'no reply-by date'}${p ? ' · ' + projectLabel(p) : ''}${args.notes ? ' · ' + args.notes : ''}` } });
   updateItem(step);
-  if (!(A.settings.autoApply || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected adding this follow-up.'; }
+  if (!(autoOK() || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected adding this follow-up.'; }
   const f = addFollowup({ from, subject, due, projectId: p ? p.id : '', notes: String(args.notes || '') });
   Object.assign(step, { state: 'applied', fuUndo: { id: f.id, before: null } }); updateItem(step);
   return `Added follow-up “${subject}” (id ${f.id}).`;
@@ -4191,7 +4292,7 @@ async function updateFollowupTool(args, step) {
   const lines = Object.keys(next).map(k => `${{ status: 'Status', due: 'Reply by', notes: 'Notes', subject: 'Subject', projectId: 'Project' }[k]}: ${show(k, f[k])} → ${show(k, next[k])}`);
   Object.assign(step, { state: 'pending', preview: { kind: 'followup', summary: `Update follow-up “${f.subject}”`, detail: lines.join(' · ') } });
   updateItem(step);
-  if (!(A.settings.autoApply || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected this change.'; }
+  if (!(autoOK() || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected this change.'; }
   const before = Object.fromEntries(Object.keys(next).map(k => [k, f[k] ?? '']));
   Object.assign(f, next); save(); if (['followups', 'today'].includes(view.tab)) render();
   Object.assign(step, { state: 'applied', fuUndo: { id: f.id, before } }); updateItem(step);
@@ -4204,7 +4305,7 @@ async function removeDeliverableTool(args, step) {
   Object.assign(step, { state: 'pending', preview: { kind: 'deliverable', summary: `Remove “${d.title}”`,
     detail: `Project: ${p ? projectLabel(p) : 'none'} · ${stageLabel(d.status)}${d.due ? ' · due ' + d.due : ''}${d.notes ? ' · notes: ' + d.notes : ''}` } });
   updateItem(step);
-  if (!(A.settings.autoApply || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user chose to keep this deliverable.'; }
+  if (!(autoOK() || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user chose to keep this deliverable.'; }
   const at = state.deliverables.indexOf(d);
   if (at < 0) return 'Error: the card was already removed.';
   state.deliverables.splice(at, 1); boardChanged();
@@ -4242,7 +4343,7 @@ async function updateDeliverableTool(args, step) {
   for (const k of Object.keys(next)) lines.push(`${names[k]}: ${show(k, d[k])} → ${show(k, next[k])}`);
   Object.assign(step, { state: 'pending', preview: { kind: 'deliverable', summary: `Update “${d.title}”`, detail: lines.join(' · ') } });
   updateItem(step);
-  if (!(A.settings.autoApply || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected this change to the deliverable.'; }
+  if (!(autoOK() || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected this change to the deliverable.'; }
   const before = Object.fromEntries(Object.keys(next).map(k => [k, d[k] ?? '']));
   Object.assign(d, next); boardChanged();
   Object.assign(step, { state: 'applied', dlUndo: { id: d.id, before } }); updateItem(step);
@@ -4256,7 +4357,7 @@ async function writeTool(name, args, step) {  // for move_files, args can be edi
   if (pv.error) return 'Error: ' + pv.error;
   Object.assign(step, { preview: pv.preview, state: 'pending' });
   updateItem(step);
-  if (!(A.settings.autoApply || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected this change. Do not make it again unless they ask.'; }
+  if (!(autoOK() || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected this change. Do not make it again unless they ask.'; }
   if (N.dirty && N.path === pv.preview.path) await saveNote();
   let note = '';
   if (pv.preview.kind === 'moves' && step._moves) {  // the user may have unticked rows or changed destinations in the table
@@ -4330,10 +4431,16 @@ async function runAiTool(tc, prof) {
   let args;
   try { args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments || '{}') : (tc.function.arguments || {}); }
   catch { return `Error: the arguments for ${name} were not valid JSON.`; }
+  return (await runTool(name, args, { prof })).text;
+}
+/** Runs one tool with its chat card, preview, approval and undo. source 'command' (a slash command the user typed) skips
+ *  the profile's tool list: the user is acting directly, as in the UI, so commands work with no assistant model at all. */
+async function runTool(name, args, { prof = aiProfile() || {}, source = 'llm' } = {}) {
+  if (source === 'command' && !AI_TOOLS[name]) await loadPlanTools();
   const spec = AI_TOOLS[name];
-  if (!spec || (spec.tracker && !prof.trackerAccess)) return `Error: there is no tool called ${name}.`;
-  const step = pushItem({ type: 'tool', name, args, state: 'running' });
-  let result;
+  if (!spec || (source === 'llm' && spec.tracker && !prof.trackerAccess)) return { text: `Error: there is no tool called ${name}.`, state: 'error' };
+  const step = pushItem({ type: 'tool', name, args, state: 'running', id: uid() });
+  let result, data;
   try {
     if (name === 'get_open_note') result = openNoteInfo();
     else if (name === 'tracker_summary') result = trackerSummary();
@@ -4352,12 +4459,14 @@ async function runAiTool(tc, prof) {
       if (name === 'search_notes' && embeddingsOn()) body.vector = await embedQuery(String(args.query || ''));
       const j = await api('/api/assistant/tool', body);
       result = j.error ? 'Error: ' + j.error : j.result;
+      data = j.data;
     }
   } catch (e) { result = 'Error: ' + e.message; }
   if (step.state === 'running') step.state = result.startsWith('Error') ? 'error' : 'done';
   if (step.state === 'error' || !AI_WRITE.has(name)) step.result = result;
   updateItem(step);
-  return result;
+  const undoable = step.state === 'applied' && !!(step.undoId || step.dlUndo || step.tsUndo || step.fuUndo || step.planUndo);
+  return { text: result, data, state: step.state, id: step.id, undoable, step };
 }
 
 /* ---------- the model call (streams through the server) ---------- */
@@ -4423,7 +4532,7 @@ async function planTool(name, args, step) {
   if (typeof r === 'string') return r;
   Object.assign(step, { state: 'pending', preview: { kind: 'plan', summary: r.summary, detail: r.detail } });
   updateItem(step);
-  if (!(A.settings.autoApply || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected this change to the plan.'; }
+  if (!(autoOK() || await waitDecision(step))) { step.state = 'rejected'; updateItem(step); return 'The user rejected this change to the plan.'; }
   const out = await r.apply();
   Object.assign(step, { state: 'applied', planUndo: out.undo }); updateItem(step);
   return out.text;
@@ -4457,8 +4566,15 @@ async function aiSend(text) {
   text = (text || '').trim();
   if (!text || A.busy) return;
   await loadAI();
+  if (text.startsWith('/')) return runCommand(text);
   const prof = aiProfile();
+  if ((!prof || cmdSettings().plainText === 'commands') && await routePlain(text, prof)) return;
   if (!prof) { toast('Add an assistant profile in Settings first'); view.tab = 'settings'; render(); return; }
+  return aiSendLLM(text, prof);
+}
+async function aiSendLLM(text, prof = aiProfile()) {
+  if (!prof) return toast('Add an assistant profile in Settings first');
+  if (A.busy) return toast('Keystone is still answering – wait or press Stop');
   if (!A.chat) newChat();
   if (!A.chat.title) A.chat.title = text.slice(0, 70);
   const ctx = A.includeNote ? pageContext(prof) : '';
@@ -4483,6 +4599,203 @@ function aiStop() {
   A.stop = true;
   if (A.abort) A.abort.abort();
   A.chat && A.chat.items.forEach(it => it._decide && it._decide(false));
+}
+
+/* ---------- slash commands (static/commands/): Keystone's actions without an LLM ---------- */
+let cmdMods = null, cmdModsSync = null;
+const loadCommands = () => cmdMods ||= Promise.all(['registry', 'chain', 'router', 'ui'].map(m => import(`/static/commands/${m}.js`)))
+  .then(([registry, chain, router, ui]) => (cmdModsSync = { registry, chain, router, ui })).catch(e => { cmdMods = null; throw e; });
+const CMD_DEFAULTS = { confirm: 'writes', plainText: 'commands', runReads: true, missLog: false, fileHeading: 'Log' };
+const cmdSettings = () => ({ ...CMD_DEFAULTS, ...(state.settings.commands || {}) });
+const DEFAULT_ROUTINES = {
+  start: { label: 'Start of day', lines: ['?/carry', '/briefme'] },
+  eod: { label: 'End of day', lines: ['?/log day {1|usual}', '/today'] },
+  monday: { label: 'Monday start', lines: ['/weekly last', '/cards week', '/fus overdue'] },
+};
+const routines = () => state.settings.routines || DEFAULT_ROUTINES;
+const autoOK = () => (A.cmdApply != null ? A.cmdApply : !!(A.settings && A.settings.autoApply));
+const isoOfTime = sec => fmt(new Date(sec * 1000));
+function hoursBy(from, to) {  // RG and leave hours between two dates, by project/code, and per day
+  const byKey = new Map(), byDay = [];
+  let total = 0;
+  for (let d = from; d <= to; d = addDays(d, 1)) {
+    const x = dayRows(d);
+    let day = 0;
+    (x ? x.rows : []).forEach(r => {
+      const hrs = num(r.h[x.di]);
+      if (!hrs) return;
+      const p = findProject(r.network.trim(), r.activity.trim()), label = p ? projectLabel(p) : r.network || r.activity ? `${r.network}/${r.activity}` : CODE_LABEL[r.code].split('– ')[1];
+      const k = `${label}|${r.code}|${!!r.ts}`, row = byKey.get(k) || byKey.set(k, { label, code: r.code, ts: !!r.ts, hours: 0 }).get(k);
+      row.hours += hrs; day += hrs;
+    });
+    total += day;
+    byDay.push({ date: d, hours: day, scheduled: num(scheduleArr()[diffDays(periodStartFor(d), d)]) });
+  }
+  return { rows: [...byKey.values()].sort((a, b) => b.hours - a.hours), total, byDay };
+}
+/** What the commands can see and do: Keystone's data and actions, behind one object (see static/commands/registry.js). */
+function cmdCtx() {
+  const readNote = async path => { try { return (await api('/api/notes/file?path=' + encodeURIComponent(path))).content; } catch { return null; } };
+  const templates = async () => { if (!N.cfg && state.settings.vaultPath) await loadTree(); return (N.cfg && N.cfg.templates) || []; };
+  const planText = async (name, args) => { const ai = await loadPlanTools(); const r = await ai.run(name, args, { ...(aiProfile() || {}), trackerAccess: true, costAccess: true }); return typeof r === 'string' ? r : r.summary; };
+  return {
+    today: () => fmt(new Date()), fmt: (iso, f) => fmtMoment(parse(iso), f), fmtTime: sec => fmtMoment(new Date(sec * 1000), 'ddd MMM D HH:mm'), isoOfTime,
+    settings: () => state.settings, commandSettings: cmdSettings, routines, tabs: () => TABS,
+    projects: () => state.projects, projectLabel, projectName: id => { const p = projectById(id); return p ? projectLabel(p) : ''; },
+    projectNote: p => (view.vault && view.vault.projectFiles && view.vault.projectFiles[p.id]) || '',
+    cards: () => state.deliverables, stageLabel, followups: () => state.followups,
+    notes: async () => { if (!N.tree && state.settings.vaultPath) await loadTree(); return (N.tree || []).filter(x => x.type !== 'folder'); },
+    people: async () => { try { return (await api('/api/people')).people || []; } catch { return []; } },
+    plans: async () => (await api('/api/plans')).plans.filter(p => !p.template),
+    openPlanName: () => planOpen() || (plannerModSync && plannerModSync.planner.plan ? plannerModSync.planner.plan.name : ''),
+    captureFile, dayHeading: iso => dayHeading(parse(iso)), readNote, templates, applyTemplate,
+    keystoneTemplate: async name => { const t = (await templates()).find(x => /^keystone\s*[–-]\s*/i.test(x.name) && x.name.replace(/^keystone\s*[–-]\s*/i, '').toLowerCase() === name.toLowerCase()); return t ? readNote(t.path) : null; },
+    ensureToday: async iso => {
+      if (!state.settings.vaultPath) throw new Error('Connect your Obsidian vault in Settings to keep a capture note');
+      if (N.path === captureFile() && N.dirty) await saveNote();
+      const j = await api('/api/notes/capture', { path: captureFile(), heading: dayHeading(parse(iso)), line: '', template: captureTemplate(), newestFirst: true });
+      if (j.created) N.tree = null;
+      return {};
+    },
+    captureLine: (text, kind) => { const c = parseCapture(text); if (kind === 'todo' && c.kind === 'note') c.kind = 'todo'; return captureLine(c); },
+    openNote: () => (N.kind === 'note' && N.path ? { path: N.path, content: N.content } : null),
+    planHours: entries => { const r = planHours(entries); return r.error ? r : { lines: r.lines, totals: r.totals }; },
+    dayInfo: iso => ({ scheduled: num(scheduleArr()[diffDays(periodStartFor(iso), iso)]), logged: dayHoursOn(iso), holiday: holidayOn(iso) || '' }),
+    usualFor: iso => {
+      const u = state.settings.usual, off = diffDays(periodStartFor(iso), iso);
+      return u ? (u.weeks[Math.floor(off / 7)] || []).filter(r => num(r.h[off % 7]) > 0).map(r => ({ network: r.network, activity: r.activity, code: r.code, ts: r.ts || undefined, hours: num(r.h[off % 7]) })) : [];
+    },
+    periodStart: periodStartFor, periodLen: PERIOD_LEN, quarterSplit, hoursBy,
+    periodInfo: iso => { const st = periodStartFor(iso), per = periodOf(st); return { start: st, end: addDays(st, PERIOD_LEN - 1), target: num(state.settings.periodHours), entered: per ? periodTotal(per) : 0, submitted: !!(per && per.submitted) }; },
+    leaveBalances: () => {
+      const cur = todayStart(), end = periodStartFor(`${new Date().getFullYear()}-12-31`);
+      const g = t => { const a = leaveInfo(t, cur), b = leaveInfo(t, end); return a ? { now: a.balance, yearEnd: b ? b.balance : a.balance } : null; };
+      return { annual: g('annual'), sick: g('sick'), carryLimit: num(state.settings.carryLimit) };
+    },
+    budgetRows: () => state.projects.filter(p => num(p.budget) && p.network.trim() && p.activity.trim()).map(p => { const i = burnInfo(p); return { id: p.id, label: projectLabel(p), budget: i.b, used: i.used, left: i.left, rate: i.rate, runOut: i.outDate ? short(i.outDate) : '' }; }),
+    warnings: () => headsUp().map(x => x.text),
+    read: async (name, args = {}) => {
+      const { vector, ...rest } = args;
+      try { return await api('/api/assistant/tool', { name, args: rest, ...(vector ? { vector } : {}) }); } catch (e) { return { error: e.message }; }
+    },
+    planRead: planText,
+    planTaskIds: async ({ plan, filter }) => (await planText('get_plan', { plan, filter })).split('\n').map(l => (l.match(/^(\d+)\.\s/) || [])[1]).filter(Boolean).map(Number),
+    taskStart: async (plan, id) => { const l = (await planText('get_plan', { plan })).split('\n').find(x => x.startsWith(id + '. ')); return l ? (l.match(/\|\s*(\d{4}-\d{2}-\d{2})\s*→/) || [])[1] || '' : ''; },
+    runTool: (name, args) => runTool(name, args, { source: 'command' }),
+    withApply: async (flag, fn) => { const old = A.cmdApply; A.cmdApply = flag; try { return await fn(); } finally { A.cmdApply = old; } },
+    embedQuery: embeddingsOn() ? embedQuery : null,
+    embedMany: embeddingsOn() ? (texts => embedForIndex(texts)) : null,
+    embedModel: () => (A.settings && A.settings.embedModel) || 'default',
+    hasLLM: () => !!aiProfile(), ask: text => setTimeout(() => aiSendLLM(text)),  // after this command run has finished
+    undoLast: async () => {
+      const it = [...(A.chat ? A.chat.items : [])].reverse().find(x => x.state === 'applied' && (x.undoId || x.dlUndo || x.tsUndo || x.fuUndo || x.planUndo));
+      if (!it) return 'Nothing to undo in this chat.';
+      await aiUndo(it);
+      return 'Undone: ' + (it.preview ? it.preview.summary : it.name);
+    },
+    chat: {
+      user: text => pushItem({ type: 'user', text }),
+      card: c => pushItem({ type: 'cmd', ...c }),
+      decide: it => new Promise(res => { it._decide = ok => { delete it._decide; it.pending = false; it.state = ok ? 'applied' : 'rejected'; updateItem(it); res(ok); }; updateItem(it); }),
+      record: (text, calls, summary) => {  // so an assistant model can follow on in the same chat
+        const m = A.chat.messages;
+        m.push({ role: 'user', content: text });
+        if (calls.length) {
+          const tcs = calls.map((c, k) => ({ id: `cmd_${Date.now().toString(36)}_${k}`, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } }));
+          m.push({ role: 'assistant', content: null, tool_calls: tcs });
+          tcs.forEach((tc, k) => m.push({ role: 'tool', tool_call_id: tc.id, content: String(calls[k].result || '').slice(0, 6000) }));
+        }
+        m.push({ role: 'assistant', content: (summary || 'Done.').slice(0, 6000) });
+        saveChat();
+      },
+    },
+    ui: {
+      openNote: path => { view.tab = 'notes'; render(); path.includes('#') ? openLinkTarget(path.replace(/\.md(?=#)/i, '')) : /\.md$/i.test(path) ? openNote(path) : /\.(png|jpe?g|gif|webp|svg)$/i.test(path) ? openImage(path) : openDoc(path); },
+      openDaily, openInbox: openInboxReview, openAway: preset => openAway(null, preset),
+      fileToday: (d, rows) => cmdModsSync.ui.fileToday(cmdCtx(), d, rows),
+      draftReply: f => setTimeout(() => draftReply(f)), go: tab => { view.tab = tab; render(); },
+      openPlan: async id => { view.tab = 'plan'; const m = await loadPlanner(); m.planner.portfolio = false; await m.openPlan(id); render(); },
+      openBrief: async () => { view.tab = 'plan'; const m = await loadPlanner(); m.planner.portfolio = false; m.planner.view = 'brief'; remember('nwa.plan.view', 'brief'); render(); },
+      shareBrief: async () => { const m = await loadPlanner(); if (!m.planner.plan) { view.tab = 'plan'; render(); return toast('Open a plan first'); } m.brief.shareDialog({ redraw: () => m.redraw() }); },
+      importCosts: async () => (await loadPlanner()).costs.importDialog({ onDone: () => render() }),
+      exportCsv, theme: t => setTheme(t), openPeriod: () => { loadPeriod(todayStart()); view.tab = 'timesheet'; render(); },
+      timerStart: (p, ts) => timerStart({ network: p.network, activity: p.activity, code: 'RG', ts }),
+      timerStop, timerStatus: () => (state.timer ? `Timer: ${timerLabel(state.timer)} · ${fmtDur(timerElapsed())}` : 'The timer is not running.'),
+    },
+  };
+}
+/** Runs a line of slash commands in the assistant panel. */
+async function runCommand(text, { from = 'composer', echo = '' } = {}) {
+  text = String(text || '').trim();
+  if (!text) return;
+  await loadAI();
+  if (A.busy) return toast('Keystone is busy – wait, or press Stop');
+  if (from !== 'composer' && view.tab !== 'assistant' && !A.open) toggleAI(true);
+  if (!A.chat) newChat();
+  if (!A.chat.title) A.chat.title = (echo || text).slice(0, 70);
+  let M;
+  try { M = await loadCommands(); } catch (e) { return toast('Commands could not load: ' + e.message); }
+  M.ui.remember(text);
+  if (A.input && from === 'composer') { A.input.value = ''; A.input.style.height = 'auto'; }
+  if (A.cmdAc) A.cmdAc.clear();
+  Object.assign(A, { busy: true, stop: false });
+  updateComposer();
+  try {
+    if (echo) { pushItem({ type: 'user', text: echo }); pushItem({ type: 'cmd', title: '↳ ' + text, note: true }); }
+    await M.chain.run(text, cmdCtx(), { echo: !echo });
+  } catch (e) { pushItem({ type: 'error', text: e.message }); }
+  finally { A.busy = false; updateComposer(); saveChat(); }
+}
+/** Plain text without a model (or with "commands first"): rules, then meaning, then the model. True when handled. */
+async function routePlain(text, prof) {
+  let M, r;
+  try { M = await loadCommands(); r = await M.router.route(text, cmdCtx(), { llm: !!prof }); } catch { r = { kind: 'none', near: [] }; }
+  const set = cmdSettings();
+  if (set.missLog && r.kind !== 'run' && r.kind !== 'suggest') api('/api/commands/miss', { text, kind: r.kind, ranked: r.ranked || [] }).catch(() => {});
+  if (r.kind === 'run' && set.runReads) { await runCommand(r.cmd, { echo: text }); return true; }
+  if (r.kind === 'none' && prof) return false;
+  if (!A.chat) newChat();
+  if (!A.chat.title) A.chat.title = text.slice(0, 70);
+  pushItem({ type: 'user', text });
+  if (A.input) A.input.value = '';
+  const ask = prof ? [{ label: 'Ask Keystone instead', ask: text }] : [];
+  if (r.kind === 'none') pushItem({ type: 'cmd', title: prof ? '' : "I can't do that without an assistant model.", md: 'These commands work without one. Type / to see them all, or add a model in Settings → AI assistant.',
+    choices: (r.near || []).map(c => ({ label: c, cmd: c, edit: true })), actions: [{ label: 'All commands', cmd: '/help' }, ...ask] });
+  else {
+    const cmds = r.kind === 'chain' ? [r.cmds.join(' ; ')] : r.kind === 'choices' ? r.cmds : [r.cmd];
+    pushItem({ type: 'cmd', title: r.kind === 'choices' ? 'Did you mean…' : r.kind === 'chain' ? 'Run these?' : 'Run this?', md: 'Click to run, or ✎ to edit it first.', choices: cmds.map(c => ({ label: c, cmd: c, edit: true })), actions: ask });
+  }
+  saveChat();
+  return true;
+}
+async function undoIds(ids) {
+  for (const id of ids) { const it = A.chat.items.find(x => x.id === id && x.state === 'applied'); if (it) await aiUndo(it); }
+  toast('Undone');
+}
+function fillComposer(text) {
+  if (view.tab !== 'assistant' && !A.open) toggleAI(true);
+  if (!A.input) return;
+  A.input.value = text; A.input.focus(); A.input.selectionStart = A.input.selectionEnd = text.length;
+  A.input.dispatchEvent(new Event('input'));
+}
+function cmdCard(it) {
+  const btn = (label, onclick, cls = 'btn soft') => h('button', { class: cls, onclick }, label);
+  const body = [];
+  if (it.md) { const d = h('div', { class: 'md cmd-md' }); d.innerHTML = mdRender(it.md); body.push(d); }
+  if (it.pre) body.push(h('pre', { class: 'ai-out' }, it.pre));
+  if (it.rows) body.push(h('div', { class: 'cmd-rows' }, it.rows.map(r => h('label', { class: 'cmd-row' },
+    h('input', { type: 'checkbox', checked: r.on || null, disabled: it._decide ? null : '', onchange: e => { r.on = e.target.checked; } }), h('span', {}, r.label)))));
+  const choices = (it.choices || []).map(c => h('span', { class: 'cmd-choice' }, btn(c.label, () => runCommand(c.cmd), 'btn soft cmd-run'),
+    c.edit !== false ? h('button', { class: 'x', title: 'Edit before running', 'aria-label': 'Edit before running', onclick: () => fillComposer(c.cmd) }, icon('edit')) : null));
+  const actions = (it.actions || []).map(a => btn(a.label, () => (a.undo ? undoIds(a.undo) : a.fill ? fillComposer(a.fill) : a.ask ? aiSendLLM(a.ask) : a.copy ? copyText(a.copy).then(() => toast('Copied')) : runCommand(a.cmd)), a.undo ? 'btn ghost' : 'btn soft'));
+  if (it.copy && !it.actions) actions.push(btn('Copy', () => copyText(it.copy).then(() => toast('Copied'))));
+  const decide = it._decide ? [h('button', { class: 'btn primary', onclick: () => it._decide(true) }, it.rows && it.rows.length > 1 ? 'Apply all' : 'Apply'), btn('Reject', () => it._decide(false), 'btn')]
+    : it.pending ? [h('span', { class: 'muted' }, 'Not run (the chat was interrupted)')] : it.state ? [h('span', { class: 'st' }, it.state === 'applied' ? '✓ Approved' : 'Rejected')] : [];
+  if (it.note) return h('div', { class: 'ai-step cmd-note' }, it.title);
+  return h('div', { class: 'ai-card cmd' + (it.error ? ' error' : it.state ? ' ' + it.state : '') },
+    it.title ? h('div', { class: 'ai-card-h' }, icon(it.error ? 'x' : 'spark'), h('b', {}, it.title)) : null, ...body,
+    choices.length ? h('div', { class: 'cmd-choices' }, choices) : null,
+    actions.length || decide.length ? h('div', { class: 'ai-card-f' }, ...decide, ...actions) : null);
 }
 
 /* ---------- chat history (data/chats/) ---------- */
@@ -4515,11 +4828,11 @@ async function openChat(id) {
 /* ---------- chat panel ---------- */
 const TOOL_ICON = { search_notes: 'search', read_note: 'file', read_document: 'doc', vault_map: 'folder', suggest_folder: 'folder', move_files: 'move', list_folder: 'folder', get_open_note: 'file', list_templates: 'template', recent_notes: 'history', tracker_summary: 'chart',
   create_note: 'plus', edit_note: 'edit', append_to_note: 'plus', move_note: 'move', add_deliverable: 'plus', update_deliverable: 'edit', remove_deliverable: 'trash', list_followups: 'history', add_followup: 'plus', update_followup: 'edit', get_timesheet: 'chart', update_timesheet: 'edit', list_plans: 'chart', get_plan: 'chart', simulate: 'spark', update_tasks: 'edit', add_tasks: 'plus', add_raid_item: 'bell',
-  cost_summary: 'chart', who_is_free: 'search', portfolio_summary: 'chart', status_draft: 'file', close_week: 'check', get_brief: 'file', add_log_entry: 'plus' };
+  cost_summary: 'chart', who_is_free: 'search', portfolio_summary: 'chart', status_draft: 'file', close_week: 'check', get_brief: 'file', add_log_entry: 'plus', grep: 'search', tasks: 'check', backlinks: 'file' };
 function toolLabel(it) {
   const a = it.args || {}, nm = p => baseName(String(p || '')).replace(/\.md$/i, '') || 'vault root';
   return { search_notes: `Searched “${a.query || ''}”${a.folder ? ' in ' + a.folder : ''}`, read_note: `Read ${nm(a.path)}`, read_document: `Read ${baseName(String(a.path || '')).split('#')[0]}${a.start_part ? ` from part ${a.start_part}` : ''}`, vault_map: `Looked at the folder structure${a.folder ? ' of ' + a.folder : ''}`, suggest_folder: `Looked for where ${baseName(String(a.path || ''))} belongs`, list_folder: `Listed ${nm(a.path)}`,
-    get_open_note: 'Looked at your open note', list_templates: 'Listed templates', recent_notes: `Listed notes changed in the last ${a.days || 7} days`, tracker_summary: 'Read tracker data', get_timesheet: `Read the timesheet${a.date ? ' for ' + a.date : ''}`, list_followups: 'Read your follow-ups' }[it.name] || it.name;
+    get_open_note: 'Looked at your open note', list_templates: 'Listed templates', recent_notes: `Listed notes changed in the last ${a.days || 7} days`, tracker_summary: 'Read tracker data', get_timesheet: `Read the timesheet${a.date ? ' for ' + a.date : ''}`, list_followups: 'Read your follow-ups', grep: `Looked for “${a.pattern || ''}”${a.folder ? ' in ' + a.folder : ''}`, tasks: `Listed ${a.status === 'done' ? 'ticked' : 'open'} checkboxes${a.folder ? ' in ' + a.folder : ''}`, backlinks: `Found notes linking to ${nm(a.path)}` }[it.name] || it.name;
 }
 function diffView(diff) {
   const lines = (diff || '').split('\n').filter(l => !l.startsWith('---') && !l.startsWith('+++'));
@@ -4528,6 +4841,7 @@ function diffView(diff) {
 function renderItem(it) {
   if (it.type === 'user') return h('div', { class: 'ai-msg user' }, it.text);
   if (it.type === 'error') return h('div', { class: 'ai-err' }, '⚠ ' + it.text);
+  if (it.type === 'cmd') return cmdCard(it);
   if (it.type === 'bot') {
     if (!it.text) return h('div', { class: 'ai-msg bot' }, h('span', { class: 'dots', title: 'Thinking' }));
     const d = h('div', { class: 'ai-msg bot md' }); d.innerHTML = mdRender(it.text);
@@ -4585,6 +4899,7 @@ function aiExamples() {
     reports: trk ? ['Which project will run out of budget first?', 'How much annual leave do I need to use before the end of the year?'] : [],
     notes: noteOpen ? ['Summarize this note', 'Pull the action items out of this note into a checklist', 'Find notes related to this one'] : [],
   }[view.tab] || [];
+  if (!aiProfile()) return ['/briefme', '/today', '/cards overdue', '/help'];
   return [...byTab, 'Search my notes for anything due this month', 'Create a meeting note for today from my template'].slice(0, 4);
 }
 function renderLog() {
@@ -4593,7 +4908,8 @@ function renderLog() {
   if (!A.chat || !A.chat.items.length) {
     A.log.replaceChildren(h('div', { class: 'ai-empty' },
       h('div', { class: 'ai-logo' }, icon('spark')), h('b', {}, 'Ask Keystone'),
-      h('p', {}, 'Ask about your notes, hours, projects or deliverables, or tell me what to write down or log. You approve every change; vault edits are committed to git, and I can’t delete notes.'),
+      h('p', {}, aiProfile() ? 'Ask about your notes, hours, projects or deliverables, or tell me what to write down or log. Type / for commands that run without the model. You approve every change; vault edits are committed to git, and I can’t delete notes.'
+        : 'Type / for commands: log hours, capture to Today.md, find notes, update cards and plans – no AI model needed. Add a model in Settings → AI assistant for questions and writing. You approve every change.'),
       h('div', { class: 'ai-sugg' }, view.tab !== 'assistant' && TAB_NAME[view.tab] ? `Suggestions for ${TAB_NAME[view.tab]}` : 'Suggestions'),
       ...aiExamples().map(t => h('button', { class: 'ai-ex', onclick: () => aiSend(t) }, t))));
     return;
@@ -4610,7 +4926,7 @@ function updateComposer() {
 function fillProfiles() {
   if (!A.profSel) return;
   const ps = (A.settings && A.settings.profiles) || [];
-  A.profSel.replaceChildren(...(ps.length ? ps.map(p => h('option', { value: p.id }, p.name + (p.trackerAccess ? ' · tracker' : ''))) : [h('option', { value: '' }, 'No profile – add one in Settings')]));
+  A.profSel.replaceChildren(...(ps.length ? ps.map(p => h('option', { value: p.id }, p.name + (p.trackerAccess ? ' · tracker' : ''))) : [h('option', { value: '' }, 'Commands only (no model)')]));
   A.profSel.value = (A.settings && A.settings.active) || '';
 }
 function aiPanel() {
@@ -4624,7 +4940,7 @@ function aiPanel() {
     view.tab = 'notes'; render(); openLinkTarget(a.dataset.target);
   } });
   A.profSel = h('select', { class: 'ai-prof', title: 'Model profile', onchange: e => saveAI({ active: e.target.value }) });
-  A.input = h('textarea', { rows: 2, placeholder: 'Ask, or tell me what to document…  (Enter to send, Shift+Enter for a new line)',
+  A.input = h('textarea', { rows: 2, placeholder: 'Ask, or type / for commands…  (Enter to send, Shift+Enter for a new line)',
     onkeydown: e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); aiSend(A.input.value); } },
     oninput: e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(160, e.target.scrollHeight) + 'px'; } });
   A.sendBtn = h('button', { class: 'ai-send', onclick: () => (A.busy ? aiStop() : aiSend(A.input.value)) });
@@ -4637,7 +4953,8 @@ function aiPanel() {
       h('button', { class: 'x', title: 'New chat', 'aria-label': 'New chat', onclick: () => { if (A.busy) return toast('Press Stop first'); newChat(); } }, icon('plus')),
       h('button', { class: 'x ai-close', title: 'Close (Ctrl+J)', 'aria-label': 'Close assistant', onclick: () => toggleAI(false) }, icon('x'))),
     A.log,
-    h('div', { class: 'ai-f' }, h('div', { class: 'ai-row' }, noteChip, A.idxEl), h('div', { class: 'ai-compose' }, A.input, A.sendBtn)));
+    h('div', { class: 'ai-f' }, h('div', { class: 'ai-row' }, noteChip, A.idxEl), A.compose = h('div', { class: 'ai-compose' }, A.input, A.sendBtn)));
+  loadCommands().then(M => { A.cmdAc = M.ui.attach(A.input, { ctx: cmdCtx }); A.compose.prepend(A.cmdAc.pop); A.compose.after(A.cmdAc.hint); }).catch(e => console.warn('Commands unavailable', e));
   fillProfiles(); updateComposer(); renderLog(); setIdxNote();
   return A.el;
 }

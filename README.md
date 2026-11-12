@@ -23,6 +23,8 @@
 
 **Keystone** is a timesheet that checks itself, a project board, a leave planner and an Obsidian-powered notebook that can search inside every file you keep: PDFs, Office files, emails, Python and Abaqus jobs. An assistant ties them together and can log your hours, update your cards, write your notes and file your documents, but only after you click **Apply**.
 
+**No AI model? Everything still works.** Every page and button works without one, and 74 slash commands cover the rest: `/log 2h #bridge`, `/todo Send the photos due:fri`, `/cards overdue -> due:+7d`, `/grep TBD`. They can be chained, piped and saved as routines, so a whole end-of-day takes one click. See **[Keystone without an AI model](docs/WITHOUT-AI.md)**.
+
 It was built for people who charge time to **network/activity (NWA) numbers** on a biweekly pay period, with leave codes, budgets per project and a portal to paste hours into. It works just as well for anyone who wants a single place for hours, deadlines and notes.
 
 ```bash
@@ -41,7 +43,8 @@ keystone-worklog
 - 📥 **An inbox that files itself.** Drop files into `Inbox/` and Keystone suggests where each one belongs, from similar files and job names already in your vault. Review the table, click **Move**, undo if needed.
 - 📊 **Plan projects like in MS Project.** A Gantt you can drag, milestones, dependencies and the critical path, who's working on what, baselines, and an issues & risks log. Opens and saves MS Project XML, and shows the hours you've charged on the timesheet against each task.
 - 💵 **Run the project, not just the plan.** Paste or upload the ERP export for the whole team (you pick the columns once), add the charges the ERP leaves out, and get earned value, CPI/SPI, a forecast and the date the money runs out. Close the week for a red/amber/green status report, and see every plan and person on one page.
-- 🤖 **An assistant that works with you.** "Log 8 hours to each project for today." "Push every card without a date to next Friday." "Summarize this note." Every change shows up as a diff to **Apply** or **Reject**, and can be undone.
+- ⌨️ **No AI model required.** Slash commands with autocomplete and a preview of each change, exact search across your notes (`/grep`, `/todos`), several actions in one approval with **Undo all**, and saved routines. Fully offline.
+- 🤖 **An assistant that works with you (optional).** "Log 8 hours to each project for today." "Push every card without a date to next Friday." "Summarize this note." Every change shows up as a diff to **Apply** or **Reject**, and can be undone.
 - 🔒 **Local-first and private.** Keystone runs on `127.0.0.1`. Use a local model (Ollama, LM Studio, llama.cpp) and nothing leaves your machine. API keys never reach the browser.
 - ⚡ **Fast on big vaults.** Listing never opens files, OneDrive online-only files aren't downloaded, folders can be skipped, documents are read in a separate process, and embedding runs on your GPU (WebGPU) when there is one.
 - ✈️ **Works without internet.** One command bundles Keystone, its Python packages and the embedding model for an air-gapped computer.
@@ -59,6 +62,28 @@ Two Sun–Sat weeks per pay period, with pay codes (RG, LA, LS, LH) and telework
 Open the assistant with **✦ Ask** or `Ctrl+J`. It searches and reads your vault (by keywords *and* by meaning, using a small model that runs in your browser), including what's **inside your PDFs, Word, PowerPoint and Excel files and saved emails**, so it can find a file for you and tell you the page. It knows which page you're on and proposes changes for you to approve. Bring any OpenAI-compatible model: a **local Gemma or Llama**, or a cloud provider.
 
 <img src="docs/screenshots/assistant.png" alt="Notes tab with a note containing LaTeX math, and the assistant proposing an edit as a diff with Apply and Reject buttons" width="900">
+
+### ⌨️ Slash commands: everything without an AI model
+Type `/` in the assistant box, the command palette (`Ctrl+K`) or quick capture: `/log 2h #bridge yesterday`, `/todo Send the photos due:fri`, `/done 3`, `/card Pad review #bridge due:fri`, `/task 12 50%`. Autocomplete fills in commands, `#projects`, `@people` and `[[notes]]`, and a line under the box says what will happen before you press Enter. Changes show a preview to **Apply**, and every change can be undone.
+
+- **Several at once:**
+  - **chains** (`/note … ; /log 1.5h #culvert ; /card …`) are checked first, approved once and reversed with **Undo all**;
+  - **bulk changes** (`/cards overdue -> due:+7d`) list every item with a tick box;
+  - **pipes** (`/actions this | todo`, `/grep "#bridge" in:Inbox | move Projects/Bridge`);
+  - **routines** like `/start`, `/eod` and `/monday`, which are also buttons on the Today page.
+- **Exact search:** `/grep` finds every line with some text (or a regular expression) across the vault, and `/todos` lists every open checkbox with its due date. `/find` searches by keywords and meaning.
+- **File the day:** `/file-today` sends today's tagged lines to project notes, the Board and Follow-ups, with a table to review first.
+- **Names are never guessed:** `#r` matching three projects gets three buttons, not a pick.
+- **Plain text works too:** "log 2 hours to culvert yesterday" becomes a command to click.
+- **Without a model,** the **Brief me**, **Weekly status report**, **File with Keystone** and **Draft reply** buttons run their commands instead.
+
+<img src="docs/screenshots/cmd-chain.png" alt="Four chained commands in one preview: two lines for Today.md, 1.5 h on the timesheet and a new Board card, each with a tick box, and Apply all" width="900">
+
+Start with **[Keystone without an AI model](docs/WITHOUT-AI.md)**, a getting-started guide with screenshots. Every command is listed in **[COMMANDS.md](docs/COMMANDS.md)**.
+
+| Exact search: `/grep` and `/todos` | Bulk changes with `->` |
+| --- | --- |
+| <img src="docs/screenshots/cmd-grep-todos.png" alt="/grep jacking results by note and line, and /todos listing every open checkbox in the vault" width="440"> | <img src="docs/screenshots/cmd-bulk.png" alt="/cards week -> due:+7d previewing five cards with tick boxes" width="440"> |
 
 ### 🔎 Search inside every file, and file the inbox
 Keystone reads the documents in your vault on your own computer and embeds them with a small model that runs in your browser, so the assistant finds files by what they say. Solver output gets an **Errors, warnings and status** summary, so *"why did girder_v3 fail?"* finds the right `.msg`. New files dropped into `Inbox/` get a suggested folder each; you review them in one table.
@@ -191,7 +216,7 @@ KEYSTONE_DATA_DIR=demo/data python app.py --port 5050
 3. **Projects:** add each network + activity you charge to, with a name and an hour budget.
 4. **Timesheet:** pick a project on each row and type hours, or use **Fill from schedule**. At the end of the week: **Copy for portal**, paste, done.
 5. *(Optional)* **Settings → Obsidian vault:** choose your vault to get Markdown notes, the Notes tab and quick capture.
-6. *(Optional)* **Settings → AI assistant:** add a profile for your local or cloud model, then press **Test connection**.
+6. *(Optional)* **Settings → AI assistant:** add a profile for your local or cloud model, then press **Test connection**. You can skip this step: everything works without a model. See [Keystone without an AI model](docs/WITHOUT-AI.md).
 
 ---
 
@@ -199,11 +224,11 @@ KEYSTONE_DATA_DIR=demo/data python app.py --port 5050
 
 | When | What to do |
 | --- | --- |
-| **Morning** | Open **Today**: hours to log, what's due, replies owed. Click **Brief me** for a summary from the assistant. |
-| **During the day** | `Ctrl+Shift+Space` to capture anything. Start the **timer** when you switch tasks. |
-| **End of day** | Stop the timer, or type what you did into **Log my day**, and the assistant turns it into timesheet hours. |
-| **New files** | Drop them into `Inbox/` in your vault, then **Notes → File the inbox**. |
-| **Friday** | **Weekly status report** drafts your report from hours, the Board and this week's notes, and saves it to your vault. |
+| **Morning** | Open **Today**: hours to log, what's due, replies owed. Click **Start of day** (`/start`) to carry yesterday's todos and get a briefing, or **Brief me** for one from the assistant. |
+| **During the day** | `Ctrl+Shift+Space` to capture anything, or `/note`, `/todo`, `/log 2h #bridge`, `/fu`. Start the **timer** when you switch tasks. |
+| **End of day** | Stop the timer, or type what you did into **Log my day**, and the assistant turns it into timesheet hours. Without a model: **End of day** (`/eod`) or `/log day 60% #bridge 40% #cr12`. Then `/file-today` files today's lines. |
+| **New files** | Drop them into `Inbox/` in your vault, then **Notes → File the inbox** (or `/inbox`). |
+| **Friday** | **Weekly status report** (`/weekly`) writes your report from hours, the Board and this week's notes, and saves it to your vault. |
 | **End of pay period** | Clear the **pay-period check**, **Copy for portal**, then **Mark as submitted**. |
 
 ### Keyboard shortcuts
@@ -213,6 +238,7 @@ KEYSTONE_DATA_DIR=demo/data python app.py --port 5050
 | `Ctrl+K` | Search everything and run commands: notes, projects, cards, "Start timer", "File my inbox", "Next pay period"… |
 | `Ctrl+Shift+Space` | Quick capture from anywhere |
 | `Ctrl+J` | Open or close the assistant |
+| `/` | In the assistant box, the palette or quick capture: [slash commands](docs/COMMANDS.md) (`Tab` completes, `↑` brings back the last one) |
 | `↑ ↓ ← →`, `Enter` | Move between hour cells on the timesheet |
 | `Ctrl+S` | Save the note you're editing (notes also autosave) |
 
@@ -224,6 +250,7 @@ KEYSTONE_DATA_DIR=demo/data python app.py --port 5050
 | `[] send drainage memo due:fri` | A checkbox with a due date |
 | `@task Review 60% plans due:2026-11-02 #bridge` | A card on the Board, plus a line in `Today.md` |
 | `@reply Bob Smith – budget question due:tomorrow` | A follow-up, plus a line in `Today.md` |
+| `/todo Call the county due:fri #culvert` (any slash command) | The command runs in the assistant panel; the capture box shows what it will do first |
 
 `due:` understands `today`, `tomorrow`, weekday names, `+3d`, `2w` and `YYYY-MM-DD`.
 
@@ -337,7 +364,9 @@ Then **restart Keystone from a new terminal** (so it sees `JAVA_HOME`) and use *
 
 ## Documentation
 
-The **[user guide](docs/GUIDE.md)** covers every feature in detail:
+New here? **[Keystone without an AI model](docs/WITHOUT-AI.md)** is a getting-started guide for doing everything with pages, buttons, slash commands and exact search: adding tasks, logging hours, filing notes, plans, chains and routines.
+
+The **[user guide](docs/GUIDE.md)** covers every feature in detail, and **[COMMANDS.md](docs/COMMANDS.md)** lists every slash command:
 - pay codes and the portal format;
 - the Obsidian export and two-way sync;
 - the Notes editor, templates, math and images;
